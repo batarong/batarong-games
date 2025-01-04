@@ -2,32 +2,12 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define MAX_PLATFORMS 5
-#define PLATFORM_WIDTH 100
-#define PLATFORM_HEIGHT 20
-
 // Define batarong properties
 typedef struct {
     int x, y;
     int width, height;
     SDL_Texture* texture; // Texture for the player
 } batarong;
-
-// Define platform properties
-typedef struct {
-    int x, y;
-    SDL_Rect rect; // Rectangle for the platform
-} Platform;
-
-Platform platforms[MAX_PLATFORMS] = {
-    {100, 500, {100, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 1
-    {300, 400, {300, 400, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 2
-    {500, 300, {500, 300, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 3
-    {200, 200, {200, 200, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 4
-    {400, 100, {400, 100, PLATFORM_WIDTH, PLATFORM_HEIGHT}}  // Platform 5
-};
-
-int platformCount = MAX_PLATFORMS;
 
 void handleInput(bool* running, batarong* batarong) {
     SDL_Event event;
@@ -52,15 +32,6 @@ void handleInput(bool* running, batarong* batarong) {
                     break;
             }
         }
-    }
-}
-
-void renderPlatforms(SDL_Renderer* renderer, int cameraY) {
-    for (int i = 0; i < platformCount; i++) {
-        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255); // Green color for platforms
-        // Adjust platform position based on camera
-        SDL_Rect platformRect = { platforms[i].x, platforms[i].y, PLATFORM_WIDTH, PLATFORM_HEIGHT };
-        SDL_RenderFillRect(renderer, &platformRect); // Draw the platform
     }
 }
 
@@ -94,6 +65,14 @@ int main(int argc, char* argv[]) {
 
     // Load the background image
     SDL_Surface* bgSurface = SDL_LoadBMP("images/bliss.bmp");
+    if (bgSurface == NULL) {
+        printf("Unable to load background image! SDL Error: %s\n", SDL_GetError());
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
     // Create a texture from the background surface
     SDL_Texture* bgTexture = SDL_CreateTextureFromSurface(renderer, bgSurface);
     SDL_FreeSurface(bgSurface); // Free the temporary surface
@@ -136,24 +115,11 @@ int main(int argc, char* argv[]) {
     const int targetFPS = 30;
     const int frameDelay = 1000 / targetFPS; // Delay in milliseconds
 
-    // Camera offset
-    int cameraY = 0;
-
     while (running) {
         Uint32 frameStart = SDL_GetTicks(); // Get the start time of the frame
 
         // Handle input
         handleInput(&running, &batarong);
-
-        // Update camera position based on player movement
-        // Only move the camera when the player reaches certain thresholds
-        if (batarong.y < 200) {
-            cameraY += 5; // Move camera down if player moves up
-            batarong.y = 200; // Prevent the player from moving above the top of the screen
-        } else if (batarong.y > 500) {
-            cameraY -= 5; // Move camera up if player moves down
-            batarong.y = 500; // Prevent the player from moving below the bottom of the screen
-        }
 
         // Clear the screen
         SDL_RenderClear(renderer);
@@ -161,9 +127,6 @@ int main(int argc, char* argv[]) {
         // Render the background texture (scaled to fit the window)
         SDL_Rect bgRect = { 0, 0, 800, 600 }; // Set the background rectangle to the window size
         SDL_RenderCopy(renderer, bgTexture, NULL, &bgRect); // Draw the background texture
-
-        // Render the platforms
-        renderPlatforms(renderer, cameraY);
 
         // Render the player texture
         SDL_Rect batarongRect = { batarong.x, batarong.y, batarong.width, batarong.height };
@@ -188,3 +151,4 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+

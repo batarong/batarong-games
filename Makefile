@@ -15,12 +15,13 @@ all: clean $(TARGET)
 
 # Rule to compile the source file into the executable
 $(TARGET): $(SRC)
+	mkdir output-directory
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) -lSDL2
 	cp -r images output-directory/
 
 # Clean up build files
 clean:
-	rm -rf output-directory/*
+	rm -rf output-directory
 
 # Phony targets
 .PHONY: all clean
