@@ -10,3 +10,14 @@ is that batarong is traveling into multiple worlds (starting world is bliss worl
 
 ### gambiling   
 gambiling will be done with piwo (beer) as currency
+
+## todo
+1. game over screen
+2. launcher
+3. more platforms
+4. collect piwo
+5. fight enemys
+6. gambling support
+7. microtransactions
+8. save state
+9. make this list better

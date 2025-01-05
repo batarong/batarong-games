@@ -5,12 +5,16 @@
 #define MAX_PLATFORMS 5
 #define PLATFORM_WIDTH 100
 #define PLATFORM_HEIGHT 20
+#define GRAVITY 1 // Gravity constant
+#define JUMP_FORCE -15 // Jump force
 
 // Define batarong properties
 typedef struct {
     int x, y;
     int width, height;
     SDL_Texture* texture; // Texture for the player
+    int velocityY; // Vertical velocity for gravity
+    bool onGround; // Check if the player is on the ground
 } batarong;
 
 // Define platform properties
@@ -35,31 +39,63 @@ void handleInput(bool* running, batarong* batarong) {
         if (event.type == SDL_QUIT) {
             *running = false; // Exit the loop if the window is closed
         }
-        // Handle keyboard input
-        if (event.type == SDL_KEYDOWN) {
-            switch (event.key.keysym.sym) {
-                case SDLK_UP:
-                    batarong->y -= 5; // Move up
-                    break;
-                case SDLK_DOWN:
-                    batarong->y += 5; // Move down
-                    break;
-                case SDLK_LEFT:
-                    batarong->x -= 5; // Move left
-                    break;
-                case SDLK_RIGHT:
-                    batarong->x += 5; // Move right
-                    break;
-            }
+    }
+
+    // Get the current state of the keyboard
+    const Uint8* state = SDL_GetKeyboardState(NULL);
+
+    // Handle keyboard input for movement
+    if (state[SDL_SCANCODE_UP]) {
+        if (batarong->onGround) {
+            batarong->velocityY = JUMP_FORCE; // Jump if on the ground
+            batarong->onGround = false; // Player is now in the air
         }
+    }
+    if (state[SDL_SCANCODE_LEFT]) {
+        batarong->x -= 5; // Move left
+    }
+    if (state[SDL_SCANCODE_RIGHT]) {
+        batarong->x += 5; // Move right
     }
 }
 
-void renderPlatforms(SDL_Renderer* renderer, int cameraY) {
+void applyGravity(batarong* batarong) {
+    if (!batarong->onGround) {
+        batarong->velocityY += GRAVITY; // Apply gravity
+        batarong->y += batarong->velocityY; // Update player position
+    }
+}
+
+bool checkCollision(batarong* batarong) {
+    // Reset onGround status
+    batarong->onGround = false;
+
+    // Check for collision with platforms
+    for (int i = 0; i < platformCount; i++) {
+        // Calculate the next position of the batarong
+        int nextY = batarong->y + batarong->velocityY + GRAVITY;
+
+        // Check if the player is falling onto the platform
+        if (batarong->x < platforms[i].x + PLATFORM_WIDTH &&
+            batarong->x + batarong->width > platforms[i].x &&
+            nextY + batarong->height >= platforms[i].y &&
+            nextY <= platforms[i].y + PLATFORM_HEIGHT) {
+            // Collision detected
+            batarong->y = platforms[i].y - batarong->height; // Place player on top of the platform
+            batarong->onGround = true; // Player is on the ground
+            batarong->velocityY = 0; // Reset vertical velocity
+            break;
+        }
+    }
+
+    return batarong->onGround;
+}
+
+void renderPlatforms(SDL_Renderer* renderer, int cameraX) {
     for (int i = 0; i < platformCount; i++) {
         SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255); // Green color for platforms
         // Adjust platform position based on camera
-        SDL_Rect platformRect = { platforms[i].x, platforms[i].y, PLATFORM_WIDTH, PLATFORM_HEIGHT };
+        SDL_Rect platformRect = { platforms[i].x - cameraX, platforms[i].y, PLATFORM_WIDTH, PLATFORM_HEIGHT };
         SDL_RenderFillRect(renderer, &platformRect); // Draw the platform
     }
 }
@@ -118,7 +154,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create a texture from the surface
-    batarong batarong = {400, 300, tempSurface->w, tempSurface->h, SDL_CreateTextureFromSurface(renderer, tempSurface)};
+    batarong batarong = {300, 400, tempSurface->w, tempSurface->h, SDL_CreateTextureFromSurface(renderer, tempSurface), 0, true}; // Spawn on Platform 1
     SDL_FreeSurface(tempSurface); // Free the temporary surface
 
     if (batarong.texture == NULL) {
@@ -137,7 +173,7 @@ int main(int argc, char* argv[]) {
     const int frameDelay = 1000 / targetFPS; // Delay in milliseconds
 
     // Camera offset
-    int cameraY = 0;
+    int cameraX = 0;
 
     while (running) {
         Uint32 frameStart = SDL_GetTicks(); // Get the start time of the frame
@@ -145,15 +181,11 @@ int main(int argc, char* argv[]) {
         // Handle input
         handleInput(&running, &batarong);
 
-        // Update camera position based on player movement
-        // Only move the camera when the player reaches certain thresholds
-        if (batarong.y < 200) {
-            cameraY += 5; // Move camera down if player moves up
-            batarong.y = 200; // Prevent the player from moving above the top of the screen
-        } else if (batarong.y > 500) {
-            cameraY -= 5; // Move camera up if player moves down
-            batarong.y = 500; // Prevent the player from moving below the bottom of the screen
-        }
+        // Apply gravity
+        applyGravity(&batarong);
+
+        // Check for collisions with platforms
+        checkCollision(&batarong);
 
         // Clear the screen
         SDL_RenderClear(renderer);
@@ -163,10 +195,10 @@ int main(int argc, char* argv[]) {
         SDL_RenderCopy(renderer, bgTexture, NULL, &bgRect); // Draw the background texture
 
         // Render the platforms
-        renderPlatforms(renderer, cameraY);
+        renderPlatforms(renderer, cameraX);
 
         // Render the player texture
-        SDL_Rect batarongRect = { batarong.x, batarong.y, batarong.width, batarong.height };
+        SDL_Rect batarongRect = { batarong.x - cameraX, batarong.y, batarong.width, batarong.height }; // Adjust player position
         SDL_RenderCopy(renderer, batarong.texture, NULL, &batarongRect); // Draw the player texture
 
         // Present the back buffer
