@@ -18,6 +18,4 @@ gambiling will be done with piwo (beer) as currency
 4. gambling support
 5. microtransactions
 6. save state
-7. make this list better
-8. game over screen (finished kinda only can restart with letter r)
-9. launcher
+7. launcher

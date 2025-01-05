@@ -2,7 +2,7 @@
 CC = gcc
 
 # Compiler flags
-CFLAGS = -Wall -I/usr/include/SDL2
+CFLAGS = -Wall -I/usr/include/SDL2 -lSDL2 -lSDL2_ttf
 
 # Source file
 SRC = test.c
@@ -16,8 +16,9 @@ all: clean $(TARGET)
 # Rule to compile the source file into the executable
 $(TARGET): $(SRC)
 	mkdir output-directory
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) -lSDL2
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
 	cp -r images output-directory/
+	cp COMIC.TTF output-directory/
 
 # Clean up build files
 clean:

@@ -1,4 +1,5 @@
 #include <SDL.h>
+#include <SDL_ttf.h> // Include SDL_ttf for text rendering
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -49,7 +50,8 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver);
 void applyGravity(Batarong* batarong);
 bool checkCollision(Batarong* batarong, bool* gameOver);
 void renderPlatforms(SDL_Renderer* renderer);
-void renderGameOver(SDL_Renderer* renderer);
+void renderGameOver(SDL_Renderer* renderer, TTF_Font* font);
+void renderText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Color color, int x, int y);
 
 void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
     SDL_Event event;
@@ -71,6 +73,7 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
             }
         }
         if (state[SDL_SCANCODE_LEFT]) {
+            batarong->x -= 5; // Move
             batarong->x -= 5; // Move left
         }
         if (state[SDL_SCANCODE_RIGHT]) {
@@ -134,20 +137,50 @@ void renderPlatforms(SDL_Renderer* renderer) {
     }
 }
 
-void renderGameOver(SDL_Renderer* renderer) {
-    // Render game over text
-    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red color for game over text
+void renderText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Color color, int x, int y) {
+    SDL_Surface* textSurface = TTF_RenderText_Solid(font, text, color);
+    if (textSurface) {
+        SDL_Texture* textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
+        SDL_Rect textRect = { x, y, textSurface->w, textSurface->h };
+        SDL_RenderCopy(renderer, textTexture, NULL, &textRect);
+        SDL_DestroyTexture(textTexture);
+        SDL_FreeSurface(textSurface);
+    }
+}
+
+void renderGameOver(SDL_Renderer* renderer, TTF_Font* font) {
+    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red color for game over background
     SDL_Rect gameOverRect = { 200, 250, 400, 100 }; // Position and size of the game over rectangle
     SDL_RenderFillRect(renderer, &gameOverRect); // Draw the game over rectangle
 
-    // Here you can add text rendering for "Game Over" and "Press R to Restart"
-    // For simplicity, we will just draw a rectangle as a placeholder
+    // Render "Game Over" text
+    SDL_Color textColor = { 255, 255, 255 }; // White color for text
+    renderText(renderer, font, "Game Over", textColor, 250, 270); // Position the text
+
+    // Render "Press R to Restart" text
+    renderText(renderer, font, "Press R to Restart", textColor, 220, 320); // Position the restart text
 }
 
 int main(int argc, char* argv[]) {
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    // Initialize SDL_ttf
+    if (TTF_Init() == -1) {
+        printf("SDL_ttf could not initialize! TTF_Error: %s\n", TTF_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    // Load a font
+    TTF_Font* font = TTF_OpenFont("COMIC.TTF", 24); // Replace with your font path
+    if (font == NULL) {
+        printf("Failed to load font! TTF_Error: %s\n", TTF_GetError());
+        TTF_Quit();
+        SDL_Quit();
         return 1;
     }
 
@@ -158,6 +191,8 @@ int main(int argc, char* argv[]) {
 
     if (window == NULL) {
         printf("Window could not be created! SDL_Error: %s\n", SDL_GetError());
+        TTF_CloseFont(font);
+        TTF_Quit();
         SDL_Quit();
         return 1;
     }
@@ -168,6 +203,8 @@ int main(int argc, char* argv[]) {
     if (renderer == NULL) {
         printf("Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
+        TTF_CloseFont(font);
+        TTF_Quit();
         SDL_Quit();
         return 1;
     }
@@ -182,6 +219,8 @@ int main(int argc, char* argv[]) {
         printf("Unable to create background texture! SDL Error: %s\n", SDL_GetError());
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
+        TTF_CloseFont(font);
+        TTF_Quit();
         SDL_Quit();
         return 1;
     }
@@ -193,6 +232,8 @@ int main(int argc, char* argv[]) {
         SDL_DestroyTexture(bgTexture);
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
+        TTF_CloseFont(font);
+        TTF_Quit();
         SDL_Quit();
         return 1;
     }
@@ -206,6 +247,8 @@ int main(int argc, char* argv[]) {
         SDL_DestroyTexture(bgTexture);
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
+        TTF_CloseFont(font);
+        TTF_Quit();
         SDL_Quit();
         return 1;
     }
@@ -246,7 +289,7 @@ int main(int argc, char* argv[]) {
 
         if (gameOver) {
             // Render the game over screen
-            renderGameOver(renderer);
+            renderGameOver(renderer, font);
         } else {
             // Render the player texture
             SDL_Rect batarongRect = { batarong.x - cameraX, batarong.y, batarong.width, batarong.height }; // Adjust player position
@@ -268,6 +311,8 @@ int main(int argc, char* argv[]) {
     SDL_DestroyTexture(bgTexture); // Destroy the background texture
     SDL_DestroyRenderer(renderer); // Destroy the renderer
     SDL_DestroyWindow(window); // Destroy the window
+    TTF_CloseFont(font); // Close the font
+    TTF_Quit(); // Quit SDL_ttf
     SDL_Quit(); // Quit SDL
 
     return 0;
