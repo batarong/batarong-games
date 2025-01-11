@@ -9,6 +9,7 @@
 #define GRAVITY 1 // Gravity constant
 #define JUMP_FORCE -15 // Jump force
 #define WINDOW_HEIGHT 600 // Window height
+#define MAX_PIWO 5 // Maximum number of piwo collectibles
 
 // Global camera offset
 int cameraX = 0;
@@ -28,22 +29,40 @@ typedef struct {
     SDL_Rect rect; // Rectangle for the platform
 } Platform;
 
+// Define piwo properties
+typedef struct {
+    int x, y;
+    SDL_Texture* texture; // Texture for the piwo
+    bool collected; // Check if the piwo has been collected
+} Piwo;
+
 Platform platforms[MAX_PLATFORMS] = {
     {100, 500, {100, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 1
     {300, 400, {300, 400, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 2
     {500, 300, {500, 300, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 3
     {200, 200, {200, 200, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 4
-    {300, 500, {300, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 
-    {400, 500, {400, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform
-    {500, 500, {500, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform  
-    {500, 600, {500, 600, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform  
-    {500, 700, {500, 700, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform  
-    {600, 500, {600, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 
-    {700, 500, {700, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform
-    {400, 100, {400, 100, PLATFORM_WIDTH, PLATFORM_HEIGHT}}  // Platform 5
+    {300, 500, {300, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 5
+    {400, 500, {400, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 6
+    {500, 500, {500, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 7
+    {500, 600, {500, 600, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 8
+    {500, 700, {500, 700, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 9
+    {600, 500, {600, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 10
+    {700, 500, {700, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 11
+    {400, 100, {400, 100, PLATFORM_WIDTH, PLATFORM_HEIGHT}}  // Platform 12
 };
 
 int platformCount = MAX_PLATFORMS;
+
+// Piwo collectibles
+Piwo piwoList[MAX_PIWO] = {
+    {150, 450, NULL, false}, // Piwo 1
+    {350, 350, NULL, false}, // Piwo 2
+    {550, 250, NULL, false}, // Piwo 3
+    {250, 150, NULL, false}, // Piwo 4
+    {450, 50, NULL, false}    // Piwo 5
+};
+
+int piwoCount = 0; // Counter for collected piwo
 
 // Function prototypes
 void handleInput(bool* running, Batarong* batarong, bool* gameOver);
@@ -52,6 +71,7 @@ bool checkCollision(Batarong* batarong, bool* gameOver);
 void renderPlatforms(SDL_Renderer* renderer);
 void renderGameOver(SDL_Renderer* renderer, TTF_Font* font);
 void renderText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Color color, int x, int y);
+void renderPiwo(SDL_Renderer* renderer);
 
 void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
     SDL_Event event;
@@ -69,11 +89,10 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
         if (state[SDL_SCANCODE_UP]) {
             if (batarong->onGround) {
                 batarong->velocityY = JUMP_FORCE; // Jump if on the ground
-                batarong->onGround = false; // Player is now in the air
+                batarong->onGround = false;
             }
         }
         if (state[SDL_SCANCODE_LEFT]) {
-            batarong->x -= 5; // Move
             batarong->x -= 5; // Move left
         }
         if (state[SDL_SCANCODE_RIGHT]) {
@@ -87,6 +106,10 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
             batarong->y = 400; // Reset player position
             batarong->velocityY = 0; // Reset vertical velocity
             batarong->onGround = true; // Reset on ground status
+            piwoCount = 0; // Reset piwo counter
+            for (int i = 0; i < MAX_PIWO; i++) {
+                piwoList[i].collected = false; // Reset piwo collection status
+            }
         }
     }
 }
@@ -125,6 +148,19 @@ bool checkCollision(Batarong* batarong, bool* gameOver) {
         *gameOver = true; // Set game over state
     }
 
+    // Check for collision with piwo
+    for (int i = 0; i < MAX_PIWO; i++) {
+        if (!piwoList[i].collected && 
+            batarong->x < piwoList[i].x + 32 && // Assuming piwo width is 32
+            batarong->x + batarong->width > piwoList[i].x &&
+            batarong->y < piwoList[i].y + 32 && // Assuming piwo height is 32
+            batarong->y + batarong->height > piwoList[i].y) {
+            // Collision detected with piwo
+            piwoList[i].collected = true; // Mark piwo as collected
+            piwoCount++; // Increment the piwo counter
+        }
+    }
+
     return batarong->onGround;
 }
 
@@ -134,6 +170,15 @@ void renderPlatforms(SDL_Renderer* renderer) {
         // Adjust platform position based on camera
         SDL_Rect platformRect = { platforms[i].x - cameraX, platforms[i].y, PLATFORM_WIDTH, PLATFORM_HEIGHT };
         SDL_RenderFillRect(renderer, &platformRect); // Draw the platform
+    }
+}
+
+void renderPiwo(SDL_Renderer* renderer) {
+    for (int i = 0; i < MAX_PIWO; i++) {
+        if (!piwoList[i].collected) {
+            SDL_Rect piwoRect = { piwoList[i].x - cameraX, piwoList[i].y, 32, 32 }; // Adjust position based on camera
+            SDL_RenderCopy(renderer, piwoList[i].texture, NULL, &piwoRect); // Draw the piwo texture
+        }
     }
 }
 
@@ -239,7 +284,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create a texture from the surface
-    Batarong batarong = {300, 400, tempSurface->w, tempSurface->h, SDL_CreateTextureFromSurface(renderer, tempSurface), 0, true}; // Spawn on Platform 1
+    Batarong batarong = {300, 400, tempSurface->w, tempSurface->h, SDL_CreateTextureFromSurface(renderer, tempSurface), 0, true}; //
     SDL_FreeSurface(tempSurface); // Free the temporary surface
 
     if (batarong.texture == NULL) {
@@ -253,6 +298,27 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Load the piwo image
+    SDL_Surface* piwoSurface = SDL_LoadBMP("images/piwo.bmp"); // Replace with your piwo image path
+    if (piwoSurface == NULL) {
+        printf("Unable to load piwo image! SDL Error: %s\n", SDL_GetError());
+        SDL_DestroyTexture(batarong.texture);
+        SDL_DestroyTexture(bgTexture);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        TTF_CloseFont(font);
+        TTF_Quit();
+        SDL_Quit();
+        return 1;
+    }
+
+    // Create a texture from the surface for each piwo
+    for (int i = 0; i < MAX_PIWO; i++) {
+        piwoList[i].texture = SDL_CreateTextureFromSurface(renderer, piwoSurface);
+    }
+    SDL_FreeSurface(piwoSurface); // Free the temporary surface
+
+    // Game loop
     bool running = true;
     bool gameOver = false; // Game over state
 
@@ -270,7 +336,7 @@ int main(int argc, char* argv[]) {
             // Apply gravity
             applyGravity(&batarong);
 
-            // Check for collisions with platforms
+            // Check for collisions with platforms and piwo
             checkCollision(&batarong, &gameOver);
         }
 
@@ -287,6 +353,9 @@ int main(int argc, char* argv[]) {
         // Render the platforms
         renderPlatforms(renderer);
 
+        // Render the piwo collectibles
+        renderPiwo(renderer);
+
         if (gameOver) {
             // Render the game over screen
             renderGameOver(renderer, font);
@@ -294,6 +363,12 @@ int main(int argc, char* argv[]) {
             // Render the player texture
             SDL_Rect batarongRect = { batarong.x - cameraX, batarong.y, batarong.width, batarong.height }; // Adjust player position
             SDL_RenderCopy(renderer, batarong.texture, NULL, &batarongRect); // Draw the player texture
+
+            // Render the piwo counter
+            SDL_Color textColor = { 255, 255, 255 }; // White color for text
+            char counterText[20];
+            sprintf(counterText, "Piwo: %d", piwoCount); // Create the counter text
+            renderText(renderer, font, counterText, textColor, 650, 10); // Position the counter at the top right
         }
 
         // Present the back buffer
@@ -306,9 +381,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Clean up
+    // Clean up resources
     SDL_DestroyTexture(batarong.texture); // Destroy the player texture
     SDL_DestroyTexture(bgTexture); // Destroy the background texture
+    for (int i = 0; i < MAX_PIWO; i++) {
+        SDL_DestroyTexture(piwoList[i].texture); // Destroy each piwo texture
+    }
     SDL_DestroyRenderer(renderer); // Destroy the renderer
     SDL_DestroyWindow(window); // Destroy the window
     TTF_CloseFont(font); // Close the font
