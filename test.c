@@ -10,6 +10,14 @@
 #define JUMP_FORCE -15 // Jump force
 #define WINDOW_HEIGHT 600 // Window height
 #define MAX_PIWO 5 // Maximum number of piwo collectibles
+#define SPRINT_SPEED 2.0 // Sprint speed multiplier
+#define BASE_SPEED 5 // Base movement speed
+
+#define MAX_SPRINT_ENERGY 100.0f
+#define SPRINT_DRAIN_RATE 1.0f
+#define SPRINT_REGEN_RATE 0.5f
+#define SPRINT_BAR_WIDTH 200
+#define SPRINT_BAR_HEIGHT 20
 
 // Global camera offset
 int cameraX = 0;
@@ -21,6 +29,8 @@ typedef struct {
     SDL_Texture* texture; // Texture for the player
     int velocityY; // Vertical velocity for gravity
     bool onGround; // Check if the player is on the ground
+    bool isSprinting; // New sprint state
+    float sprintEnergy;  // New sprint energy property
 } Batarong;
 
 // Define platform properties
@@ -72,6 +82,7 @@ void renderPlatforms(SDL_Renderer* renderer);
 void renderGameOver(SDL_Renderer* renderer, TTF_Font* font);
 void renderText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Color color, int x, int y);
 void renderPiwo(SDL_Renderer* renderer);
+void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy);
 
 void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
     SDL_Event event;
@@ -86,6 +97,18 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
 
     // Handle keyboard input for movement
     if (!*gameOver) {
+        // Only allow sprinting if we have energy
+        batarong->isSprinting = state[SDL_SCANCODE_LSHIFT] && batarong->sprintEnergy > 0;
+        
+        // Handle sprint energy
+        if (batarong->isSprinting && (state[SDL_SCANCODE_LEFT] || state[SDL_SCANCODE_RIGHT])) {
+            batarong->sprintEnergy = fmaxf(batarong->sprintEnergy - SPRINT_DRAIN_RATE, 0);
+        } else {
+            batarong->sprintEnergy = fminf(batarong->sprintEnergy + SPRINT_REGEN_RATE, MAX_SPRINT_ENERGY);
+        }
+
+        float currentSpeed = BASE_SPEED * (batarong->isSprinting ? SPRINT_SPEED : 1.0);
+
         if (state[SDL_SCANCODE_UP]) {
             if (batarong->onGround) {
                 batarong->velocityY = JUMP_FORCE; // Jump if on the ground
@@ -93,10 +116,10 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
             }
         }
         if (state[SDL_SCANCODE_LEFT]) {
-            batarong->x -= 5; // Move left
+            batarong->x -= currentSpeed; // Move left
         }
         if (state[SDL_SCANCODE_RIGHT]) {
-            batarong->x += 5; // Move right
+            batarong->x += currentSpeed; // Move right
         }
     } else {
         // Check for restart input
@@ -206,6 +229,18 @@ void renderGameOver(SDL_Renderer* renderer, TTF_Font* font) {
     renderText(renderer, font, "Press R to Restart", textColor, 220, 320); // Position the restart text
 }
 
+void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy) {
+    // Draw sprint bar background
+    SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+    SDL_Rect bgRect = { 10, 560, SPRINT_BAR_WIDTH, SPRINT_BAR_HEIGHT };
+    SDL_RenderFillRect(renderer, &bgRect);
+
+    // Draw sprint energy level
+    SDL_SetRenderDrawColor(renderer, 0, 255, 255, 255);
+    SDL_Rect energyRect = { 10, 560, (int)(SPRINT_BAR_WIDTH * (sprintEnergy / MAX_SPRINT_ENERGY)), SPRINT_BAR_HEIGHT };
+    SDL_RenderFillRect(renderer, &energyRect);
+}
+
 int main(int argc, char* argv[]) {
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -284,7 +319,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Create a texture from the surface
-    Batarong batarong = {300, 400, tempSurface->w, tempSurface->h, SDL_CreateTextureFromSurface(renderer, tempSurface), 0, true}; //
+    Batarong batarong = {300, 400, tempSurface->w, tempSurface->h, SDL_CreateTextureFromSurface(renderer, tempSurface), 0, true, false, MAX_SPRINT_ENERGY}; //
     SDL_FreeSurface(tempSurface); // Free the temporary surface
 
     if (batarong.texture == NULL) {
@@ -369,6 +404,9 @@ int main(int argc, char* argv[]) {
             char counterText[20];
             sprintf(counterText, "Piwo: %d", piwoCount); // Create the counter text
             renderText(renderer, font, counterText, textColor, 650, 10); // Position the counter at the top right
+
+            // Render sprint bar
+            renderSprintBar(renderer, batarong.sprintEnergy);
         }
 
         // Present the back buffer

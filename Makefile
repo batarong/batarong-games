@@ -2,7 +2,7 @@
 CC = gcc
 
 # Compiler flags
-CFLAGS = -Wall -I/usr/include/SDL2 -lSDL2_ttf -lSDL2
+CFLAGS = -Wall -I/usr/include/SDL2 -lSDL2_ttf -lSDL2 -lm
 
 # Source file
 SRC = test.c
