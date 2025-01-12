@@ -217,16 +217,22 @@ void renderText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Co
 }
 
 void renderGameOver(SDL_Renderer* renderer, TTF_Font* font) {
-    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red color for game over background
-    SDL_Rect gameOverRect = { 200, 250, 400, 100 }; // Position and size of the game over rectangle
-    SDL_RenderFillRect(renderer, &gameOverRect); // Draw the game over rectangle
+    // Fill the entire screen with black
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_Rect fullscreenRect = { 0, 0, 800, 600 };
+    SDL_RenderFillRect(renderer, &fullscreenRect);
 
-    // Render "Game Over" text
+    // Center the "Game Over" text
     SDL_Color textColor = { 255, 255, 255 }; // White color for text
-    renderText(renderer, font, "Game Over", textColor, 250, 270); // Position the text
+    renderText(renderer, font, "Game Over", textColor, 300, 250);
 
-    // Render "Press R to Restart" text
-    renderText(renderer, font, "Press R to Restart", textColor, 220, 320); // Position the restart text
+    // Center the "Press R to Restart" text
+    renderText(renderer, font, "Press R to Restart", textColor, 270, 300);
+
+    // Add piwo count to the game over screen
+    char scoreText[32];
+    sprintf(scoreText, "piwo count: %d", piwoCount);
+    renderText(renderer, font, scoreText, textColor, 300, 350);
 }
 
 void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy) {
