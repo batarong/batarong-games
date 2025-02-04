@@ -9,7 +9,7 @@
 #define GRAVITY 1 // Gravity constant
 #define JUMP_FORCE -15 // Jump force
 #define WINDOW_HEIGHT 600 // Window height
-#define MAX_PIWO 5 // Maximum number of piwo collectibles
+#define MAX_PIWO 6 // Maximum number of piwo collectibles
 #define SPRINT_SPEED 2.0 // Sprint speed multiplier
 #define BASE_SPEED 5 // Base movement speed
 
@@ -24,6 +24,11 @@
 
 #define SPIN_TIME 2000  // 2 seconds for spinning animation
 #define RESULT_DISPLAY_TIME 2000  // 2 seconds to show result
+#define ERROR_DISPLAY_TIME 2000  // 2 seconds to show error
+
+// Add near other #define statements
+#define SMALL_FONT_SIZE 18
+#define REGULAR_FONT_SIZE 24
 
 // Global camera offset
 int cameraX = 0;
@@ -82,6 +87,9 @@ Uint32 resultStartTime = 0;
 
 int currentBet = 0;  // Store the current bet amount
 
+bool showError = false;
+Uint32 errorStartTime = 0;
+
 Platform platforms[MAX_PLATFORMS] = {
     {100, 500, {100, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 1
     {300, 400, {300, 400, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 2
@@ -105,7 +113,8 @@ Piwo piwoList[MAX_PIWO] = {
     {350, 350, NULL, false}, // Piwo 2
     {550, 250, NULL, false}, // Piwo 3
     {250, 150, NULL, false}, // Piwo 4
-    {450, 50, NULL, false}    // Piwo 5
+    {450, 50, NULL, false},  // Piwo 5
+    {450, 60, NULL, false},  // Piwo 6
 };
 
 int piwoCount = 0; // Counter for collected piwo
@@ -119,10 +128,11 @@ void renderGameOver(SDL_Renderer* renderer, TTF_Font* font);
 void renderText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Color color, int x, int y);
 void renderPiwo(SDL_Renderer* renderer);
 void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy, Batarong* batarong, TTF_Font* font);
-void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font);
+void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* smallFont);
 bool isNearGamblingMachine(Batarong* batarong);
 void handleTextInput(SDL_Event* event);
 void startGambling();
+bool hasEnoughPiwoToPlay(void);
 
 bool isNearGamblingMachine(Batarong* batarong) {
     int dx = abs((batarong->x + batarong->width/2) - (gamblingMachine.x + GAMBLING_MACHINE_WIDTH/2));
@@ -130,7 +140,11 @@ bool isNearGamblingMachine(Batarong* batarong) {
     return dx < 50 && dy < 50; // Within 50 pixels of the machine
 }
 
-void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font) {
+bool hasEnoughPiwoToPlay(void) {
+    return piwoCount >= 10;
+}
+
+void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* smallFont) {
     // Fill screen with a different color for gambling screen
     SDL_SetRenderDrawColor(renderer, 50, 0, 100, 255);
     SDL_RenderClear(renderer);
@@ -162,7 +176,8 @@ void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font) {
             piwoCount += winnings;
             sprintf(resultText, "You won! 2x! Bet: %d, Won: %d", currentBet, winnings);
         } else if (spinResult == 2) {
-            int winnings = (int)(currentBet * 1.25f);
+            // Fix: Use floating-point arithmetic for accurate calculation
+            int winnings = (int)(currentBet * 1.25f + 0.5f);  // Multiply by 1.25 and round
             piwoCount += winnings;
             sprintf(resultText, "You won! 1.25x! Bet: %d, Won: %d", currentBet, winnings);
         } else {
@@ -178,19 +193,34 @@ void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font) {
     } else {
         // Render text input box background near bottom left
         SDL_SetRenderDrawColor(renderer, 70, 70, 70, 255);
-        SDL_Rect inputBox = {20, 500, 200, 40}; // New position: x=20, y=500
+        SDL_Rect inputBox = {20, 500, 250, 40}; // Changed width from 200 to 250
         SDL_RenderFillRect(renderer, &inputBox);
+
+        // Check if player has enough piwo to play
+        if (!hasEnoughPiwoToPlay()) {
+            SDL_Color errorColor = {255, 0, 0};  // Red color for error
+            renderText(renderer, font, "Need at least 10 piwo to play!", errorColor, 250, 300);
+        } else if (showError) {
+            SDL_Color errorColor = {255, 0, 0};  // Red color for error
+            renderText(renderer, font, "Not enough piwo!", errorColor, 250, 300);
+            
+            if (SDL_GetTicks() - errorStartTime >= ERROR_DISPLAY_TIME) {
+                showError = false;
+            }
+        }
 
         // Render input text or placeholder in new position
         if (betInput.length > 0) {
             renderText(renderer, font, betInput.text, textColor, 30, 505); // Adjusted text position
         } else {
             SDL_Color placeholderColor = {128, 128, 128};
-            renderText(renderer, font, "Enter bet amount", placeholderColor, 30, 505); // Adjusted text position
+            renderText(renderer, smallFont, "Enter bet amount (min: 10)", placeholderColor, 30, 508);
         }
 
-        // Add instruction text
-        renderText(renderer, font, "Press A to spin!", textColor, 250, 500);
+        // Only show spin instruction if they have enough piwo
+        if (hasEnoughPiwoToPlay()) {
+            renderText(renderer, font, "Press A to spin!", textColor, 300, 500);
+        }
     }
 }
 
@@ -219,15 +249,24 @@ void handleTextInput(SDL_Event* event) {
 }
 
 void startGambling() {
+    if (!hasEnoughPiwoToPlay()) {
+        return;  // Don't allow gambling if not enough piwo
+    }
     if (betInput.length > 0) {
         currentBet = atoi(betInput.text);  // Store the bet amount
-        if (currentBet <= piwoCount && currentBet > 0) {
-            isSpinning = true;
-            spinStartTime = SDL_GetTicks();
-            piwoCount -= currentBet;  // Deduct the bet amount
-            betInput.length = 0;  // Clear input
-            betInput.text[0] = '\0';
-            resultDisplayed = false;
+        if (currentBet >= 10) {  // Check minimum bet first
+            if (currentBet <= piwoCount) {
+                isSpinning = true;
+                spinStartTime = SDL_GetTicks();
+                piwoCount -= currentBet;  // Deduct the bet amount
+                betInput.length = 0;  // Clear input
+                betInput.text[0] = '\0';
+                resultDisplayed = false;
+            } else {
+                // Show error for insufficient piwo
+                showError = true;
+                errorStartTime = SDL_GetTicks();
+            }
         }
     }
 }
@@ -471,6 +510,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Update main function where font is loaded, add a second font
+    // After the first font loading
+    TTF_Font* smallFont = TTF_OpenFont("COMIC.TTF", SMALL_FONT_SIZE);
+    if (smallFont == NULL) {
+        printf("Failed to load small font! TTF_Error: %s\n", TTF_GetError());
+        TTF_CloseFont(font);
+        TTF_Quit();
+        SDL_Quit();
+        return 1;
+    }
+
     // Create a window
     SDL_Window* window = SDL_CreateWindow("2D Game", 
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 
@@ -622,7 +672,7 @@ int main(int argc, char* argv[]) {
             // Render the game over screen
             renderGameOver(renderer, font);
         } else if (isGambling) {
-            renderGamblingScreen(renderer, font);
+            renderGamblingScreen(renderer, font, smallFont);
         } else {
             // Render the player texture (now after gambling machine)
             SDL_Rect batarongRect = { batarong.x - cameraX, batarong.y, batarong.width, batarong.height }; // Adjust player position
@@ -658,6 +708,7 @@ int main(int argc, char* argv[]) {
     SDL_DestroyTexture(gamblingMachine.texture);
     SDL_DestroyRenderer(renderer); // Destroy the renderer
     SDL_DestroyWindow(window); // Destroy the window
+    TTF_CloseFont(smallFont);
     TTF_CloseFont(font); // Close the font
     TTF_Quit(); // Quit SDL_ttf
     SDL_Quit(); // Quit SDL
