@@ -30,6 +30,11 @@
 #define SMALL_FONT_SIZE 18
 #define REGULAR_FONT_SIZE 24
 
+#define MAX_RAY 3  // Maximum number of Ray NPCs
+#define RAY_WIDTH 64
+#define RAY_HEIGHT 64
+#define SHOP_ITEM_COUNT 3
+
 // Global camera offset
 int cameraX = 0;
 
@@ -72,6 +77,17 @@ typedef struct {
     int maxLength;
 } TextInput;
 
+typedef struct {
+    int x, y;
+    SDL_Texture* texture;
+} Ray;
+
+typedef struct {
+    char name[32];
+    int price;
+    bool purchased;
+} ShopItem;
+
 // Add to global variables
 bool isGambling = false;
 GamblingMachine gamblingMachine = {600, 430, NULL}; // Position the machine somewhere accessible
@@ -89,6 +105,21 @@ int currentBet = 0;  // Store the current bet amount
 
 bool showError = false;
 Uint32 errorStartTime = 0;
+
+Ray rayList[MAX_RAY] = {
+    {200, 430, NULL},  // First Ray
+    {800, 430, NULL},  // Second Ray
+    {1200, 430, NULL}  // Third Ray
+};
+
+bool isShoppingOpen = false;
+Ray* currentRay = NULL;
+
+ShopItem shopItems[SHOP_ITEM_COUNT] = {
+    {"Double Jump", 50, false},
+    {"Speed Boost", 30, false},
+    {"Health Boost", 40, false}
+};
 
 Platform platforms[MAX_PLATFORMS] = {
     {100, 500, {100, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 1
@@ -133,6 +164,8 @@ bool isNearGamblingMachine(Batarong* batarong);
 void handleTextInput(SDL_Event* event);
 void startGambling();
 bool hasEnoughPiwoToPlay(void);
+bool isNearRay(Batarong* batarong, Ray* ray);
+void renderShopScreen(SDL_Renderer* renderer, TTF_Font* font);
 
 bool isNearGamblingMachine(Batarong* batarong) {
     int dx = abs((batarong->x + batarong->width/2) - (gamblingMachine.x + GAMBLING_MACHINE_WIDTH/2));
@@ -142,6 +175,12 @@ bool isNearGamblingMachine(Batarong* batarong) {
 
 bool hasEnoughPiwoToPlay(void) {
     return piwoCount >= 10;
+}
+
+bool isNearRay(Batarong* batarong, Ray* ray) {
+    int dx = abs((batarong->x + batarong->width/2) - (ray->x + RAY_WIDTH/2));
+    int dy = abs((batarong->y + batarong->height/2) - (ray->y + RAY_HEIGHT/2));
+    return dx < 50 && dy < 50;
 }
 
 void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* smallFont) {
@@ -224,6 +263,39 @@ void renderGamblingScreen(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* smal
     }
 }
 
+void renderShopScreen(SDL_Renderer* renderer, TTF_Font* font) {
+    // Fill screen with shop background
+    SDL_SetRenderDrawColor(renderer, 0, 100, 100, 255);
+    SDL_RenderClear(renderer);
+
+    // Render title
+    SDL_Color textColor = {255, 255, 255};
+    renderText(renderer, font, "Ray's Shop (Press B to exit)", textColor, 250, 50);
+
+    // Show current piwo count
+    char piwoText[32];
+    sprintf(piwoText, "Your Piwo: %d", piwoCount);
+    renderText(renderer, font, piwoText, textColor, 250, 100);
+
+    // Render shop items
+    for (int i = 0; i < SHOP_ITEM_COUNT; i++) {
+        SDL_Rect itemRect = {200, 150 + (i * 80), 400, 60};
+        
+        // Item background
+        SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
+        SDL_RenderFillRect(renderer, &itemRect);
+
+        // Item text
+        char itemText[64];
+        if (shopItems[i].purchased) {
+            sprintf(itemText, "%s (Purchased)", shopItems[i].name);
+        } else {
+            sprintf(itemText, "%s - %d piwo (Press %d)", shopItems[i].name, shopItems[i].price, i + 1);
+        }
+        renderText(renderer, font, itemText, textColor, 220, 165 + (i * 80));
+    }
+}
+
 // Modify handleTextInput function to properly handle numeric input
 void handleTextInput(SDL_Event* event) {
     if (event->type == SDL_KEYDOWN) {
@@ -290,8 +362,20 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
         // Add gambling interaction with key press check
         if (state[SDL_SCANCODE_A]) {
             if (!aKeyPressed) {  // Only trigger once when key is first pressed
-                if (!isGambling && isNearGamblingMachine(batarong)) {
-                    isGambling = true;
+                if (!isGambling && !isShoppingOpen) {
+                    // Check all Ray NPCs
+                    for (int i = 0; i < MAX_RAY; i++) {
+                        if (isNearRay(batarong, &rayList[i])) {
+                            isShoppingOpen = true;
+                            currentRay = &rayList[i];
+                            break;
+                        }
+                    }
+                    if (!isShoppingOpen) {  // If not near Ray, check gambling machine
+                        if (isNearGamblingMachine(batarong)) {
+                            isGambling = true;
+                        }
+                    }
                 } else if (isGambling && !isSpinning && !resultDisplayed) {
                     startGambling();  // Start gambling when A is pressed again
                 }
@@ -304,7 +388,10 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
         // Add B key for exiting gambling menu
         if (state[SDL_SCANCODE_B]) {
             if (!bKeyPressed) {  // Only trigger once when key is first pressed
-                if (isGambling) {
+                if (isShoppingOpen) {
+                    isShoppingOpen = false;
+                    currentRay = NULL;
+                } else if (isGambling) {
                     isGambling = false;
                 }
                 bKeyPressed = true;
@@ -350,6 +437,28 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
             if (state[SDL_SCANCODE_RIGHT]) {
                 batarong->x += currentSpeed; // Move right
                 batarong->facingLeft = false;  // Update direction
+            }
+        }
+
+        // Add number key handling for shop purchases
+        if (isShoppingOpen) {
+            if (state[SDL_SCANCODE_1] || state[SDL_SCANCODE_2] || state[SDL_SCANCODE_3]) {
+                int itemIndex = -1;
+                if (state[SDL_SCANCODE_1]) itemIndex = 0;
+                if (state[SDL_SCANCODE_2]) itemIndex = 1;
+                if (state[SDL_SCANCODE_3]) itemIndex = 2;
+
+                if (itemIndex >= 0 && !shopItems[itemIndex].purchased) {
+                    if (piwoCount >= shopItems[itemIndex].price) {
+                        piwoCount -= shopItems[itemIndex].price;
+                        shopItems[itemIndex].purchased = true;
+                        // Here you would implement the effects of the purchased items
+                        // For example:
+                        // if (itemIndex == 0) enableDoubleJump();
+                        // if (itemIndex == 1) increaseSpeed();
+                        // if (itemIndex == 2) increaseHealth();
+                    }
+                }
             }
         }
     } else {
@@ -621,6 +730,19 @@ int main(int argc, char* argv[]) {
     gamblingMachine.texture = SDL_CreateTextureFromSurface(renderer, gamblingMachineSurface);
     SDL_FreeSurface(gamblingMachineSurface);
 
+    // Load Ray texture
+    SDL_Surface* raySurface = SDL_LoadBMP("images/ray.bmp");
+    if (raySurface == NULL) {
+        printf("Unable to load Ray image! SDL Error: %s\n", SDL_GetError());
+        // ... handle error ...
+    }
+
+    // Create texture for each Ray NPC
+    for (int i = 0; i < MAX_RAY; i++) {
+        rayList[i].texture = SDL_CreateTextureFromSurface(renderer, raySurface);
+    }
+    SDL_FreeSurface(raySurface);
+
     // Game loop
     bool running = true;
     bool gameOver = false; // Game over state
@@ -668,11 +790,24 @@ int main(int argc, char* argv[]) {
         // Render the piwo collectibles
         renderPiwo(renderer);
 
+        // Render Ray NPCs
+        for (int i = 0; i < MAX_RAY; i++) {
+            SDL_Rect rayRect = {
+                rayList[i].x - cameraX,
+                rayList[i].y,
+                RAY_WIDTH,
+                RAY_HEIGHT
+            };
+            SDL_RenderCopy(renderer, rayList[i].texture, NULL, &rayRect);
+        }
+
         if (gameOver) {
             // Render the game over screen
             renderGameOver(renderer, font);
         } else if (isGambling) {
             renderGamblingScreen(renderer, font, smallFont);
+        } else if (isShoppingOpen) {
+            renderShopScreen(renderer, font);
         } else {
             // Render the player texture (now after gambling machine)
             SDL_Rect batarongRect = { batarong.x - cameraX, batarong.y, batarong.width, batarong.height }; // Adjust player position
@@ -706,6 +841,9 @@ int main(int argc, char* argv[]) {
         SDL_DestroyTexture(piwoList[i].texture); // Destroy each piwo texture
     }
     SDL_DestroyTexture(gamblingMachine.texture);
+    for (int i = 0; i < MAX_RAY; i++) {
+        SDL_DestroyTexture(rayList[i].texture);
+    }
     SDL_DestroyRenderer(renderer); // Destroy the renderer
     SDL_DestroyWindow(window); // Destroy the window
     TTF_CloseFont(smallFont);
