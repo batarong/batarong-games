@@ -578,6 +578,7 @@ void renderGameOver(SDL_Renderer* renderer, TTF_Font* font) {
     renderText(renderer, font, scoreText, textColor, 300, 350);
 }
 
+// Modify renderSprintBar function to show shop prompt when near Ray
 void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy, Batarong* batarong, TTF_Font* font) {
     // Draw sprint bar background
     SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
@@ -589,10 +590,18 @@ void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy, Batarong* batar
     SDL_Rect energyRect = { 10, 560, (int)(SPRINT_BAR_WIDTH * (sprintEnergy / MAX_SPRINT_ENERGY)), SPRINT_BAR_HEIGHT };
     SDL_RenderFillRect(renderer, &energyRect);
 
-    // Show prompt next to sprint bar if near gambling machine
+    // Show prompts next to sprint bar
+    SDL_Color promptColor = {255, 255, 255};
     if (isNearGamblingMachine(batarong)) {
-        SDL_Color promptColor = {255, 255, 255};
         renderText(renderer, font, "Press A to gamble", promptColor, SPRINT_BAR_WIDTH + 30, 560);
+    } else {
+        // Check if near any Ray NPC
+        for (int i = 0; i < MAX_RAY; i++) {
+            if (isNearRay(batarong, &rayList[i])) {
+                renderText(renderer, font, "Press A to enter shop", promptColor, SPRINT_BAR_WIDTH + 30, 560);
+                break;
+            }
+        }
     }
 }
 
