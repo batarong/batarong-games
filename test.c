@@ -8,14 +8,14 @@
 #define PLATFORM_HEIGHT 20
 #define GRAVITY 1 // Gravity constant
 #define JUMP_FORCE -15 // Jump force
-#define WINDOW_HEIGHT 600 // Window height
-#define MAX_PIWO 6 // Maximum number of piwo collectibles
-#define SPRINT_SPEED 2.0 // Sprint speed multiplier
-#define BASE_SPEED 5 // Base movement speed
+#define WINDOW_HEIGHT 600
+#define MAX_PIWO 6
+#define SPRINT_SPEED 2.0
+#define BASE_SPEED 5
 
 #define MAX_SPRINT_ENERGY 100.0f
 #define SPRINT_DRAIN_RATE 1.0f
-#define SPRINT_REGEN_RATE 0.2f  // Slower regeneration
+#define SPRINT_REGEN_RATE 0.2f
 #define SPRINT_BAR_WIDTH 200
 #define SPRINT_BAR_HEIGHT 20
 
@@ -34,6 +34,12 @@
 #define RAY_WIDTH 64
 #define RAY_HEIGHT 64
 #define SHOP_ITEM_COUNT 3
+
+// Add near other #define statements
+#define MAX_BULLETS 10
+#define BULLET_SPEED 10
+#define BULLET_WIDTH 8
+#define BULLET_HEIGHT 4
 
 // Global camera offset
 int cameraX = 0;
@@ -88,6 +94,13 @@ typedef struct {
     bool purchased;
 } ShopItem;
 
+// Add after other struct definitions
+typedef struct {
+    int x, y;
+    bool active;
+    bool direction;  // true = left, false = right
+} Bullet;
+
 // Add to global variables
 bool isGambling = false;
 GamblingMachine gamblingMachine = {600, 430, NULL}; // Position the machine somewhere accessible
@@ -116,9 +129,9 @@ bool isShoppingOpen = false;
 Ray* currentRay = NULL;
 
 ShopItem shopItems[SHOP_ITEM_COUNT] = {
-    {"Double Jump", 50, false},
-    {"Speed Boost", 30, false},
-    {"Health Boost", 40, false}
+    {"A pistol", 5, false},
+    {"The America", 50, false},
+    {"nuke", 1000, false}
 };
 
 Platform platforms[MAX_PLATFORMS] = {
@@ -150,6 +163,15 @@ Piwo piwoList[MAX_PIWO] = {
 
 int piwoCount = 0; // Counter for collected piwo
 
+// Add near other global variables
+SDL_Texture* gunTexture = NULL;
+bool hasGun = false;
+
+// Add to global variables
+Bullet bullets[MAX_BULLETS] = {0};
+Uint32 lastShotTime = 0;
+const int SHOOT_COOLDOWN = 250;  // 250ms cooldown between shots
+
 // Function prototypes
 void handleInput(bool* running, Batarong* batarong, bool* gameOver);
 void applyGravity(Batarong* batarong);
@@ -166,6 +188,11 @@ void startGambling();
 bool hasEnoughPiwoToPlay(void);
 bool isNearRay(Batarong* batarong, Ray* ray);
 void renderShopScreen(SDL_Renderer* renderer, TTF_Font* font);
+
+// Add these new function prototypes after existing ones
+void shootBullet(Batarong* batarong);
+void updateBullets(void);
+void renderBullets(SDL_Renderer* renderer);
 
 bool isNearGamblingMachine(Batarong* batarong) {
     int dx = abs((batarong->x + batarong->width/2) - (gamblingMachine.x + GAMBLING_MACHINE_WIDTH/2));
@@ -452,17 +479,16 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
                     if (piwoCount >= shopItems[itemIndex].price) {
                         piwoCount -= shopItems[itemIndex].price;
                         shopItems[itemIndex].purchased = true;
-                        // Here you would implement the effects of the purchased items
-                        // For example:
-                        // if (itemIndex == 0) enableDoubleJump();
-                        // if (itemIndex == 1) increaseSpeed();
-                        // if (itemIndex == 2) increaseHealth();
+                        // Give player the gun when purchasing first item (pistol)
+                        if (itemIndex == 0) {
+                            hasGun = true;
+                        }
                     }
                 }
             }
         }
     } else {
-        // Check for restart input
+        // Update the restart logic in handleInput function
         if (state[SDL_SCANCODE_R]) {
             *gameOver = false; // Reset game over state
             batarong->x = 300; // Reset player position
@@ -472,10 +498,24 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
             batarong->sprintEnergy = MAX_SPRINT_ENERGY;  // Reset sprint energy to full
             batarong->isSprinting = false;  // Reset sprint state
             batarong->sprintKeyReleased = true;  // Reset sprint key state
-            piwoCount = 0; // Reset piwo counter
+            // Remove piwo reset
+            // piwoCount = 0; // Remove this line
+            // Remove piwo collectibles reset
             for (int i = 0; i < MAX_PIWO; i++) {
-                piwoList[i].collected = false; // Reset piwo collection status
+                if (!piwoList[i].collected) {
+                    piwoList[i].collected = false; // Only reset uncollected piwo
+                }
             }
+            // Don't reset gun status
+            // hasGun = false; // Remove this line if it exists
+        }
+    }
+
+    // Add shooting control before the gameOver check
+    if (!*gameOver && !isGambling && !isShoppingOpen) {
+        const Uint8* state = SDL_GetKeyboardState(NULL);
+        if (state[SDL_SCANCODE_SPACE] && hasGun) {
+            shootBullet(batarong);
         }
     }
 }
@@ -605,6 +645,55 @@ void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy, Batarong* batar
     }
 }
 
+// Add these new functions before main()
+void shootBullet(Batarong* batarong) {
+    Uint32 currentTime = SDL_GetTicks();
+    if (currentTime - lastShotTime < SHOOT_COOLDOWN) {
+        return;  // Don't shoot if cooldown hasn't elapsed
+    }
+
+    // Find first inactive bullet
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (!bullets[i].active) {
+            bullets[i].active = true;
+            bullets[i].direction = batarong->facingLeft;
+            bullets[i].x = batarong->x + (batarong->facingLeft ? 0 : batarong->width);
+            bullets[i].y = batarong->y + (batarong->height / 2);
+            lastShotTime = currentTime;
+            break;
+        }
+    }
+}
+
+void updateBullets(void) {
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (bullets[i].active) {
+            // Move bullet
+            bullets[i].x += bullets[i].direction ? -BULLET_SPEED : BULLET_SPEED;
+            
+            // Deactivate if off screen
+            if (bullets[i].x < cameraX - 100 || bullets[i].x > cameraX + 900) {
+                bullets[i].active = false;
+            }
+        }
+    }
+}
+
+void renderBullets(SDL_Renderer* renderer) {
+    SDL_SetRenderDrawColor(renderer, 255, 255, 0, 255);  // Yellow bullets
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        if (bullets[i].active) {
+            SDL_Rect bulletRect = {
+                bullets[i].x - cameraX,
+                bullets[i].y,
+                BULLET_WIDTH,
+                BULLET_HEIGHT
+            };
+            SDL_RenderFillRect(renderer, &bulletRect);
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -639,10 +728,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Create a window
+    // Create a window and check for errors
     SDL_Window* window = SDL_CreateWindow("2D Game", 
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 
-        800, 600, SDL_WINDOW_SHOWN); // Create a window
+        800, 600, SDL_WINDOW_SHOWN);
 
     if (window == NULL) {
         printf("Window could not be created! SDL_Error: %s\n", SDL_GetError());
@@ -752,6 +841,15 @@ int main(int argc, char* argv[]) {
     }
     SDL_FreeSurface(raySurface);
 
+    // Load gun texture
+    SDL_Surface* gunSurface = SDL_LoadBMP("images/gun.bmp");
+    if (gunSurface == NULL) {
+        printf("Unable to load gun image! SDL Error: %s\n", SDL_GetError());
+    } else {
+        gunTexture = SDL_CreateTextureFromSurface(renderer, gunSurface);
+        SDL_FreeSurface(gunSurface);
+    }
+
     // Game loop
     bool running = true;
     bool gameOver = false; // Game over state
@@ -772,6 +870,9 @@ int main(int argc, char* argv[]) {
 
             // Check for collisions with platforms and piwo
             checkCollision(&batarong, &gameOver);
+
+            // Add bullet updates here
+            updateBullets();
         }
 
         // Update camera position to follow the player
@@ -780,9 +881,9 @@ int main(int argc, char* argv[]) {
         // Clear the screen
         SDL_RenderClear(renderer);
 
-        // Render the background texture (scaled to fit the window)
-        SDL_Rect bgRect = { 0, 0, 800, 600 }; // Set the background rectangle to the window size
-        SDL_RenderCopy(renderer, bgTexture, NULL, &bgRect); // Draw the background texture
+        // Draw background
+        SDL_Rect bgRect = { 0, 0, 800, 600 };
+        SDL_RenderCopy(renderer, bgTexture, NULL, &bgRect);
 
         // Render the platforms
         renderPlatforms(renderer);
@@ -823,6 +924,17 @@ int main(int argc, char* argv[]) {
             SDL_RenderCopyEx(renderer, batarong.texture, NULL, &batarongRect, 
                            0, NULL, batarong.facingLeft ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
 
+            // After rendering the player but before the HUD
+            if (hasGun) {
+                SDL_Rect gunRect = { 
+                    batarong.x - cameraX + (batarong.facingLeft ? -32 : batarong.width), 
+                    batarong.y + 20, 
+                    32, 32 
+                };
+                SDL_RenderCopyEx(renderer, gunTexture, NULL, &gunRect, 
+                               0, NULL, batarong.facingLeft ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+            }
+
             // Render the piwo counter
             SDL_Color textColor = { 255, 255, 255 }; // White color for text
             char counterText[20];
@@ -833,13 +945,16 @@ int main(int argc, char* argv[]) {
             renderSprintBar(renderer, batarong.sprintEnergy, &batarong, font);
         }
 
+        // Add bullet rendering here
+        renderBullets(renderer);
+
         // Present the back buffer
         SDL_RenderPresent(renderer); 
 
-        // Calculate frame time and delay if necessary
+        // Cap frame rate
         Uint32 frameTime = SDL_GetTicks() - frameStart;
         if (frameDelay > frameTime) {
-            SDL_Delay(frameDelay - frameTime); // Delay to maintain frame rate
+            SDL_Delay(frameDelay - frameTime);
         }
     }
 
@@ -853,6 +968,7 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < MAX_RAY; i++) {
         SDL_DestroyTexture(rayList[i].texture);
     }
+    SDL_DestroyTexture(gunTexture);
     SDL_DestroyRenderer(renderer); // Destroy the renderer
     SDL_DestroyWindow(window); // Destroy the window
     TTF_CloseFont(smallFont);
