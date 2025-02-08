@@ -9,7 +9,7 @@
 #define GRAVITY 1 // Gravity constant
 #define JUMP_FORCE -15 // Jump force
 #define WINDOW_HEIGHT 600
-#define MAX_PIWO 6
+#define MAX_PIWO 10
 #define SPRINT_SPEED 2.0
 #define BASE_SPEED 5
 
@@ -158,7 +158,11 @@ Piwo piwoList[MAX_PIWO] = {
     {550, 250, NULL, false}, // Piwo 3
     {250, 150, NULL, false}, // Piwo 4
     {450, 50, NULL, false},  // Piwo 5
-    {450, 60, NULL, false},  // Piwo 6
+    {450, 51, NULL, false},  // Piwo 6
+    {450, 52, NULL, false},  // Piwo 7
+    {450, 53, NULL, false},  // Piwo 8
+    {450, 54, NULL, false},  // Piwo 9
+    {450, 55, NULL, false}   // Piwo 10
 };
 
 int piwoCount = 0; // Counter for collected piwo
