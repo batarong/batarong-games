@@ -14,6 +14,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: dependencies
-      run: apt install libsdl2-compat
+      run: sudo apt install -y libsdl2-compat
     - name: make
       run: make
