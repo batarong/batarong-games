@@ -1,22 +1,18 @@
-# Compiler
 CC = gcc
 
-# Compiler flags
-CFLAGS = -Wall -I/usr/include/SDL2 -lSDL2_ttf -lSDL2 -lm
+CFLAGS = -Wall $(shell sdl2-config --cflags)
+LDFLAGS = $(shell sdl2-config --libs) -lSDL2_ttf -lm
 
-# Source file
-SRC = test.c
+SRC = game.c
 
-# Executable name
-TARGET = output-directory/test
+TARGET = output-directory/main-game
 
 # Default target
 all: clean $(TARGET)
 
-# Rule to compile the source file into the executable
 $(TARGET): $(SRC)
 	mkdir output-directory
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
 	cp -r images output-directory/
 	cp COMIC.TTF output-directory/
 
