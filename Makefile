@@ -1,24 +1,34 @@
 CC = gcc
 
-CFLAGS = -Wall $(shell sdl2-config --cflags)
-LDFLAGS = $(shell sdl2-config --libs) -lSDL2_ttf -lm
+SDL2_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
+SDL2_LIBS   := $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
+SDL2_TTF_LIBS := $(shell pkg-config --libs SDL2_ttf 2>/dev/null || echo -lSDL2_ttf)
+
+CFLAGS ?= -O2 -Wall
+CFLAGS += $(SDL2_CFLAGS)
+LDFLAGS += $(SDL2_LIBS) $(SDL2_TTF_LIBS) -lm
 
 SRC = game.c
+TARGET_DIR = output-directory
+TARGET = $(TARGET_DIR)/main-game
 
-TARGET = output-directory/main-game
+all: $(TARGET)
 
-# Default target
-all: clean $(TARGET)
+$(TARGET): $(SRC) | $(TARGET_DIR)
+	$(CC) $(CFLAGS) -o $@ $(SRC) $(LDFLAGS)
+	cp -r images $(TARGET_DIR)/
+	cp COMIC.TTF $(TARGET_DIR)/
 
-$(TARGET): $(SRC)
-	mkdir output-directory
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
-	cp -r images output-directory/
-	cp COMIC.TTF output-directory/
+$(TARGET_DIR):
+	mkdir -p $(TARGET_DIR)
 
-# Clean up build files
+run: $(TARGET)
+	./$(TARGET)
+
+debug: CFLAGS += -g -O0
+debug: clean all
+
 clean:
-	rm -rf output-directory
+	rm -rf $(TARGET_DIR)
 
-# Phony targets
-.PHONY: all clean
+.PHONY: all clean run debug

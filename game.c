@@ -2,6 +2,8 @@
 #include <SDL_ttf.h> 
 #include <stdbool.h>
 #include <stdio.h>
+#include <math.h>
+#include <string.h>
 
 #define MAX_PLATFORMS 12
 #define PLATFORM_WIDTH 100
@@ -34,12 +36,122 @@
 #define RAY_WIDTH 64
 #define RAY_HEIGHT 64
 #define SHOP_ITEM_COUNT 3
+#define SHOP_ITEM_NAME_MAX 64
 
 // Add near other #define statements
 #define MAX_BULLETS 10
 #define BULLET_SPEED 10
 #define BULLET_WIDTH 8
 #define BULLET_HEIGHT 4
+
+// shitty markdown stuff
+#define MAX_CHARACTER_DEF 16
+#define CHARACTER_NAME_MAX 32
+#define CHARACTER_IMAGE_MAX 128
+
+typedef struct {
+    char name[CHARACTER_NAME_MAX];
+    char image[CHARACTER_IMAGE_MAX];
+} CharacterDef;
+
+static CharacterDef characterDefs[MAX_CHARACTER_DEF];
+static int characterDefCount = 0;
+
+static char* ltrim(char* s) {
+    while (*s && (*s==' '||*s=='\t'||*s=='\r' )) s++;
+    return s;
+}
+
+static void rtrim(char* s) {
+    size_t len = strlen(s);
+    while (len>0 && (s[len-1]=='\n'||s[len-1]=='\r'||s[len-1]==' '||s[len-1]=='\t')) { s[--len]='\0'; }
+}
+
+static void addCharacterDef(const char* name, const char* image) {
+    if (!name || !*name || !image || !*image) return;
+    for (int i=0;i<characterDefCount;i++) {
+        if (strcmp(characterDefs[i].name, name)==0) {
+            size_t ilen = strlen(image);
+            if (ilen >= CHARACTER_IMAGE_MAX) ilen = CHARACTER_IMAGE_MAX-1;
+            memcpy(characterDefs[i].image, image, ilen);
+            characterDefs[i].image[ilen] = '\0';
+            return;
+        }
+    }
+    if (characterDefCount < MAX_CHARACTER_DEF) {
+        size_t nlen = strlen(name);
+        if (nlen >= CHARACTER_NAME_MAX) nlen = CHARACTER_NAME_MAX-1;
+        memcpy(characterDefs[characterDefCount].name, name, nlen);
+        characterDefs[characterDefCount].name[nlen] = '\0';
+        size_t ilen2 = strlen(image);
+        if (ilen2 >= CHARACTER_IMAGE_MAX) ilen2 = CHARACTER_IMAGE_MAX-1;
+        memcpy(characterDefs[characterDefCount].image, image, ilen2);
+        characterDefs[characterDefCount].image[ilen2] = '\0';
+        characterDefCount++;
+    }
+}
+
+static const char* getCharacterImage(const char* name, const char* fallback) {
+    for (int i=0;i<characterDefCount;i++) {
+        if (strcmp(characterDefs[i].name, name)==0) return characterDefs[i].image;
+    }
+    return fallback;
+}
+
+static void loadCharacterConfig(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "[config] Failed to open %s, using built-in defaults.\n", path);
+        return;
+    }
+    char line[256];
+    char currentName[CHARACTER_NAME_MAX] = "";
+    char currentCategory[CHARACTER_NAME_MAX] = "";
+    while (fgets(line, sizeof(line), f)) {
+        char* p = ltrim(line);
+        if (!*p) continue;
+        if (p[0]=='#') {
+            int hashes = 0; while (p[hashes]=='#') hashes++;
+            char* after = p + hashes;
+            after = ltrim(after);
+            rtrim(after);
+            char* paren = strchr(after, '(');
+            if (paren) {
+                char* q = paren; while (q>after && (*(q-1)==' '||*(q-1)=='\t')) q--; *q='\0';
+            }
+            if (hashes==1) { // category
+                size_t clen = strlen(after);
+                if (clen >= CHARACTER_NAME_MAX) clen = CHARACTER_NAME_MAX-1;
+                memcpy(currentCategory, after, clen);
+                currentCategory[clen]='\0';
+                currentName[0]='\0';
+            } else if (hashes==2) { // entry
+                size_t elen = strlen(after);
+                if (elen >= CHARACTER_NAME_MAX) elen = CHARACTER_NAME_MAX-1;
+                memcpy(currentName, after, elen);
+                currentName[elen]='\0';
+            }
+            continue;
+        }
+        // key=value lines inside a section
+        if (*currentName) {
+            if (strncmp(p, "image", 5)==0) {
+                char* eq = strchr(p, '=');
+                if (eq) {
+                    eq++; eq = ltrim(eq);
+                    rtrim(eq);
+                    if (*eq=='"') {
+                        char* endq = strrchr(eq+1, '"');
+                        if (endq) *endq='\0';
+                        eq++;
+                    }
+                    addCharacterDef(currentName, eq);
+                }
+            }
+        }
+    }
+    fclose(f);
+}
 
 // Global camera offset
 int cameraX = 0;
@@ -89,10 +201,14 @@ typedef struct {
 } Ray;
 
 typedef struct {
-    char name[32];
+    char name[SHOP_ITEM_NAME_MAX];
     int price;
     bool purchased;
 } ShopItem;
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(SHOP_ITEM_NAME_MAX + 40 < 128, "weird ass error in code, proceed with caution.");
+#endif
 
 // Add after other struct definitions
 typedef struct {
@@ -106,6 +222,7 @@ bool isGambling = false;
 GamblingMachine gamblingMachine = {600, 430, NULL}; // Position the machine somewhere accessible
 bool aKeyPressed = false; // Track if A key was pressed last frame
 bool bKeyPressed = false; // Track if B key was pressed last frame
+bool escKeyPressed = false; // Track if ESC key was pressed last frame
 TextInput betInput = {"", 0, 10};  // Max 10 digits
 
 bool isSpinning = false;
@@ -127,6 +244,7 @@ Ray rayList[MAX_RAY] = {
 
 bool isShoppingOpen = false;
 Ray* currentRay = NULL;
+bool isPaused = false; // Pause state
 
 ShopItem shopItems[SHOP_ITEM_COUNT] = {
     {"A pistol", 5, false},
@@ -192,6 +310,9 @@ void startGambling();
 bool hasEnoughPiwoToPlay(void);
 bool isNearRay(Batarong* batarong, Ray* ray);
 void renderShopScreen(SDL_Renderer* renderer, TTF_Font* font);
+
+// New pause screen renderer
+void renderPauseScreen(SDL_Renderer* renderer, TTF_Font* font);
 
 // Add these new function prototypes after existing ones
 void shootBullet(Batarong* batarong);
@@ -311,17 +432,20 @@ void renderShopScreen(SDL_Renderer* renderer, TTF_Font* font) {
     // Render shop items
     for (int i = 0; i < SHOP_ITEM_COUNT; i++) {
         SDL_Rect itemRect = {200, 150 + (i * 80), 400, 60};
-        
+
         // Item background
         SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
         SDL_RenderFillRect(renderer, &itemRect);
 
         // Item text
-        char itemText[64];
+        char itemText[256];
+        const int maxNameLen = 80; // Hard cap to avoid overly long lines
+        char safeName[81];
+        snprintf(safeName, sizeof(safeName), "%.*s", maxNameLen, shopItems[i].name);
         if (shopItems[i].purchased) {
-            sprintf(itemText, "%s (Purchased)", shopItems[i].name);
+            snprintf(itemText, sizeof(itemText), "%s (Purchased)", safeName);
         } else {
-            sprintf(itemText, "%s - %d piwo (Press %d)", shopItems[i].name, shopItems[i].price, i + 1);
+            snprintf(itemText, sizeof(itemText), "%s - %d piwo (Press %d)", safeName, shopItems[i].price, i + 1);
         }
         renderText(renderer, font, itemText, textColor, 220, 165 + (i * 80));
     }
@@ -390,6 +514,25 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
 
     // Handle keyboard input for movement
     if (!*gameOver) {
+        // ESC handling (single press)
+        if (state[SDL_SCANCODE_ESCAPE]) {
+            if (!escKeyPressed) {
+                if (isGambling) {
+                    isGambling = false;
+                } else if (isShoppingOpen) {
+                    isShoppingOpen = false;
+                } else {
+                    isPaused = !isPaused; // Toggle pause
+                }
+                escKeyPressed = true;
+            }
+        } else {
+            escKeyPressed = false;
+        }
+
+        // When paused, ignore rest of gameplay input (except ESC already handled)
+        if (isPaused) return;
+
         // Add gambling interaction with key press check
         if (state[SDL_SCANCODE_A]) {
             if (!aKeyPressed) {  // Only trigger once when key is first pressed
@@ -516,7 +659,7 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
     }
 
     // Add shooting control before the gameOver check
-    if (!*gameOver && !isGambling && !isShoppingOpen) {
+    if (!*gameOver && !isGambling && !isShoppingOpen && !isPaused) {
         const Uint8* state = SDL_GetKeyboardState(NULL);
         if (state[SDL_SCANCODE_SPACE] && hasGun) {
             shootBullet(batarong);
@@ -622,6 +765,19 @@ void renderGameOver(SDL_Renderer* renderer, TTF_Font* font) {
     renderText(renderer, font, scoreText, textColor, 300, 350);
 }
 
+void renderPauseScreen(SDL_Renderer* renderer, TTF_Font* font) {
+    // Dim screen with semi-transparent overlay (simulate by drawing a dark rectangle)
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
+    SDL_Rect overlay = {0, 0, 800, 600};
+    SDL_RenderFillRect(renderer, &overlay);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+
+    SDL_Color textColor = {255, 255, 255};
+    renderText(renderer, font, "Paused", textColor, 360, 240);
+    renderText(renderer, font, "Press ESC to Resume", textColor, 300, 280);
+}
+
 // Modify renderSprintBar function to show shop prompt when near Ray
 void renderSprintBar(SDL_Renderer* renderer, float sprintEnergy, Batarong* batarong, TTF_Font* font) {
     // Draw sprint bar background
@@ -698,7 +854,10 @@ void renderBullets(SDL_Renderer* renderer) {
     }
 }
 
-int main(int argc, char* argv[]) {
+int main(void) {
+    // Load character config prior to SDL image loads
+    loadCharacterConfig("config/config.md");
+
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
@@ -757,8 +916,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Load the background image
-    SDL_Surface* bgSurface = SDL_LoadBMP("images/bliss.bmp");
+    // Load the background image (category backgrounds -> entry 'default')
+    SDL_Surface* bgSurface = SDL_LoadBMP(getCharacterImage("default", "images/bliss.bmp"));
     // Create a texture from the background surface
     SDL_Texture* bgTexture = SDL_CreateTextureFromSurface(renderer, bgSurface);
     SDL_FreeSurface(bgSurface); // Free the temporary surface
@@ -774,7 +933,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Load the player image
-    SDL_Surface* tempSurface = SDL_LoadBMP("images/batarong.bmp");
+    SDL_Surface* tempSurface = SDL_LoadBMP(getCharacterImage("player", "images/batarong.bmp"));
     if (tempSurface == NULL) {
         printf("Unable to load image! SDL Error: %s\n", SDL_GetError());
         SDL_DestroyTexture(bgTexture);
@@ -804,7 +963,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Load the piwo image
-    SDL_Surface* piwoSurface = SDL_LoadBMP("images/piwo.bmp"); // Replace with your piwo image path
+    SDL_Surface* piwoSurface = SDL_LoadBMP(getCharacterImage("piwo", "images/piwo.bmp")); // From config
     if (piwoSurface == NULL) {
         printf("Unable to load piwo image! SDL Error: %s\n", SDL_GetError());
         SDL_DestroyTexture(batarong.texture);
@@ -824,7 +983,7 @@ int main(int argc, char* argv[]) {
     SDL_FreeSurface(piwoSurface); // Free the temporary surface
 
     // Load gambling machine texture
-    SDL_Surface* gamblingMachineSurface = SDL_LoadBMP("images/gambling.bmp");
+    SDL_Surface* gamblingMachineSurface = SDL_LoadBMP(getCharacterImage("gambling_machine", "images/gambling.bmp"));
     if (gamblingMachineSurface == NULL) {
         printf("Unable to load gambling machine image! SDL Error: %s\n", SDL_GetError());
         // ... handle error ...
@@ -833,7 +992,7 @@ int main(int argc, char* argv[]) {
     SDL_FreeSurface(gamblingMachineSurface);
 
     // Load Ray texture
-    SDL_Surface* raySurface = SDL_LoadBMP("images/ray.bmp");
+    SDL_Surface* raySurface = SDL_LoadBMP(getCharacterImage("ray", "images/ray.bmp"));
     if (raySurface == NULL) {
         printf("Unable to load Ray image! SDL Error: %s\n", SDL_GetError());
         // ... handle error ...
@@ -846,7 +1005,7 @@ int main(int argc, char* argv[]) {
     SDL_FreeSurface(raySurface);
 
     // Load gun texture
-    SDL_Surface* gunSurface = SDL_LoadBMP("images/gun.bmp");
+    SDL_Surface* gunSurface = SDL_LoadBMP(getCharacterImage("gun", "images/gun.bmp"));
     if (gunSurface == NULL) {
         printf("Unable to load gun image! SDL Error: %s\n", SDL_GetError());
     } else {
@@ -868,7 +1027,7 @@ int main(int argc, char* argv[]) {
         // Handle input
         handleInput(&running, &batarong, &gameOver);
 
-        if (!gameOver) {
+    if (!gameOver && !isPaused) {
             // Apply gravity
             applyGravity(&batarong);
 
@@ -922,6 +1081,26 @@ int main(int argc, char* argv[]) {
             renderGamblingScreen(renderer, font, smallFont);
         } else if (isShoppingOpen) {
             renderShopScreen(renderer, font);
+        } else if (isPaused) {
+            // Render gameplay elements behind pause (player, HUD already drawn below)
+            SDL_Rect batarongRect = { batarong.x - cameraX, batarong.y, batarong.width, batarong.height };
+            SDL_RenderCopyEx(renderer, batarong.texture, NULL, &batarongRect,
+                           0, NULL, batarong.facingLeft ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+            if (hasGun) {
+                SDL_Rect gunRect = { 
+                    batarong.x - cameraX + (batarong.facingLeft ? -32 : batarong.width), 
+                    batarong.y + 20, 
+                    32, 32 
+                };
+                SDL_RenderCopyEx(renderer, gunTexture, NULL, &gunRect,
+                               0, NULL, batarong.facingLeft ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+            }
+            SDL_Color textColor = { 255, 255, 255 };
+            char counterText[20];
+            sprintf(counterText, "Piwo: %d", piwoCount);
+            renderText(renderer, font, counterText, textColor, 650, 10);
+            renderSprintBar(renderer, batarong.sprintEnergy, &batarong, font);
+            renderPauseScreen(renderer, font);
         } else {
             // Render the player texture (now after gambling machine)
             SDL_Rect batarongRect = { batarong.x - cameraX, batarong.y, batarong.width, batarong.height }; // Adjust player position
