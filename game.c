@@ -51,6 +51,10 @@
 #define BULLET_WIDTH 8
 #define BULLET_HEIGHT 4
 
+/* Dialog system limits */
+#define DIALOG_MAX_LINES 16
+#define DIALOG_LINE_MAX 160
+
 /* Character config limits */
 #define MAX_CHARACTER_DEF 16
 #define CHARACTER_NAME_MAX 32
@@ -135,16 +139,13 @@ static void addCharacterDefinition(const char* name, const char* imagePath) {
     if (!name || !*name || !imagePath || !*imagePath) return;
     for (int i = 0; i < characterDefinitionCount; i++) {
         if (strcmp(characterDefinitions[i].name, name) == 0) {
-            strncpy(characterDefinitions[i].imagePath, imagePath, CHARACTER_IMAGE_MAX - 1);
-            characterDefinitions[i].imagePath[CHARACTER_IMAGE_MAX - 1] = '\0';
+            snprintf(characterDefinitions[i].imagePath, CHARACTER_IMAGE_MAX, "%s", imagePath);
             return;
         }
     }
     if (characterDefinitionCount < MAX_CHARACTER_DEF) {
-        strncpy(characterDefinitions[characterDefinitionCount].name, name, CHARACTER_NAME_MAX - 1);
-        characterDefinitions[characterDefinitionCount].name[CHARACTER_NAME_MAX - 1] = '\0';
-        strncpy(characterDefinitions[characterDefinitionCount].imagePath, imagePath, CHARACTER_IMAGE_MAX - 1);
-        characterDefinitions[characterDefinitionCount].imagePath[CHARACTER_IMAGE_MAX - 1] = '\0';
+        snprintf(characterDefinitions[characterDefinitionCount].name, CHARACTER_NAME_MAX, "%s", name);
+        snprintf(characterDefinitions[characterDefinitionCount].imagePath, CHARACTER_IMAGE_MAX, "%s", imagePath);
         characterDefinitionCount++;
     }
 }
@@ -155,6 +156,10 @@ static const char* getCharacterImagePath(const char* name, const char* fallback)
     }
     return fallback;
 }
+
+/* Convenience wrappers (original code references these names). */
+static int readFileToMemory(const char* filePath, MemoryFile* output) { return loadFileToMemory(filePath, output); }
+static const char* getCharacterImage(const char* name, const char* fallback) { return getCharacterImagePath(name, fallback); }
 
 static void loadCharacterConfig(const char* filePath) {
     FILE* file = fopen(filePath, "r");
@@ -173,8 +178,7 @@ static void loadCharacterConfig(const char* filePath) {
             char* sectionName = ltrim(trimmedLine + hashCount);
             rtrim(sectionName);
             if (hashCount == 2) {
-                strncpy(currentName, sectionName, CHARACTER_NAME_MAX - 1);
-                currentName[CHARACTER_NAME_MAX - 1] = '\0';
+                snprintf(currentName, CHARACTER_NAME_MAX, "%s", sectionName);
             }
             continue;
         }
@@ -183,6 +187,12 @@ static void loadCharacterConfig(const char* filePath) {
             if (equalsSign) {
                 char* imagePath = ltrim(equalsSign + 1);
                 rtrim(imagePath);
+                // Strip optional surrounding quotes (e.g., "images/foo.bmp")
+                size_t len = strlen(imagePath);
+                if (len >= 2 && imagePath[0] == '"' && imagePath[len - 1] == '"') {
+                    imagePath[len - 1] = '\0';
+                    imagePath++; // move past opening quote for this call
+                }
                 addCharacterDefinition(currentName, imagePath);
             }
         }
@@ -253,6 +263,97 @@ typedef struct {
     bool active;
     bool direction;  // true = left, false = right
 } Bullet;
+
+
+typedef struct {
+    char lines[DIALOG_MAX_LINES][DIALOG_LINE_MAX];
+    int totalLines;
+    int currentIndex;
+    bool active;
+    bool freeze_movement;
+    bool portrait_visible;
+    bool speaker_visible;
+    SDL_Texture* portrait_tex;
+    char speaker[CHARACTER_NAME_MAX];
+} DialogState;
+
+static DialogState dialogState = {0};
+
+void renderText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Color color, int x, int y);
+
+void dialog_start(const char** lines, int lineCount,
+                  const char* speakerName,
+                  const char* portraitKey,
+                  bool freeze_movement,
+                  bool portrait_visible,
+                  bool speaker_visible,
+                  SDL_Renderer* renderer) {
+    if (!lines || lineCount <= 0) return;
+    if (lineCount > DIALOG_MAX_LINES) lineCount = DIALOG_MAX_LINES;
+    if (dialogState.portrait_tex) { SDL_DestroyTexture(dialogState.portrait_tex); dialogState.portrait_tex = NULL; }
+    memset(&dialogState, 0, sizeof(dialogState));
+    for (int i = 0; i < lineCount; i++) if (lines[i]) snprintf(dialogState.lines[i], DIALOG_LINE_MAX, "%.*s", DIALOG_LINE_MAX - 1, lines[i]);
+    dialogState.totalLines = lineCount;
+    dialogState.currentIndex = 0;
+    dialogState.active = true;
+    dialogState.freeze_movement = freeze_movement;
+    dialogState.portrait_visible = portrait_visible;
+    dialogState.speaker_visible = speaker_visible && speakerName && *speakerName;
+    if (dialogState.speaker_visible) snprintf(dialogState.speaker, CHARACTER_NAME_MAX, "%.*s", CHARACTER_NAME_MAX - 1, speakerName);
+    if (portrait_visible && portraitKey && *portraitKey && renderer) {
+        const char* path = getCharacterImage(portraitKey, "images/batarong.bmp");
+        MemoryFile mem = {0};
+        if (readFileToMemory(path, &mem) == 0) {
+            SDL_RWops* rw = SDL_RWFromConstMem(mem.data, (int)mem.size);
+            SDL_Surface* surf = rw ? SDL_LoadBMP_RW(rw, 1) : NULL;
+            if (surf) {
+                dialogState.portrait_tex = SDL_CreateTextureFromSurface(renderer, surf);
+                SDL_FreeSurface(surf);
+            }
+            free(mem.data);
+        }
+    }
+}
+
+void dialog_start_simple(const char** lines, int lineCount) { dialog_start(lines, lineCount, NULL, NULL, false, false, false, NULL); }
+
+void dialog_next(void) {
+    if (!dialogState.active) return;
+    dialogState.currentIndex++;
+    if (dialogState.currentIndex >= dialogState.totalLines) {
+        dialogState.active = false;
+        if (dialogState.portrait_tex) { SDL_DestroyTexture(dialogState.portrait_tex); dialogState.portrait_tex = NULL; }
+    }
+}
+
+void dialog_close(void) {
+    if (dialogState.portrait_tex) { SDL_DestroyTexture(dialogState.portrait_tex); dialogState.portrait_tex = NULL; }
+    dialogState.active = false;
+}
+
+void dialog_draw(SDL_Renderer* renderer, TTF_Font* font) {
+    if (!dialogState.active || !font) return;
+    const int boxPadding = 10;
+    const int boxHeight = 140;
+    SDL_Rect box = {20, 600 - boxHeight - 20, 800 - 40, boxHeight};
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
+    SDL_RenderFillRect(renderer, &box);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    SDL_Color textColor = {255, 255, 255, 255};
+    if (dialogState.portrait_visible && dialogState.portrait_tex) {
+        SDL_Rect pRect = { box.x + 20, box.y - 100, 96, 96 };
+        SDL_RenderCopy(renderer, dialogState.portrait_tex, NULL, &pRect);
+    }
+    if (dialogState.speaker_visible) renderText(renderer, font, dialogState.speaker, textColor, box.x + boxPadding, box.y + 6);
+    if (dialogState.currentIndex < dialogState.totalLines) {
+        int textTop = box.y + boxPadding + (dialogState.speaker_visible ? 26 : 0);
+        renderText(renderer, font, dialogState.lines[dialogState.currentIndex], textColor, box.x + boxPadding, textTop);
+        char progress[32];
+        snprintf(progress, sizeof(progress), "%d/%d", dialogState.currentIndex + 1, dialogState.totalLines);
+        renderText(renderer, font, progress, textColor, box.x + box.w - 60, box.y + box.h - 30);
+    }
+}
 
 // Add to global variables
 bool isGambling = false;
@@ -358,6 +459,12 @@ void renderPauseScreen(SDL_Renderer* renderer, TTF_Font* font);
 void shootBullet(Batarong* batarong);
 void updateBullets(void);
 void renderBullets(SDL_Renderer* renderer);
+// Dialog system prototypes (scaffold)
+void dialog_start_simple(const char** lines, int lineCount);
+void dialog_start(const char** lines, int lineCount, const char* speakerName, const char* portraitKey, bool freeze_movement, bool portrait_visible, bool speaker_visible, SDL_Renderer* renderer);
+void dialog_next(void);
+void dialog_close(void);
+void dialog_draw(SDL_Renderer* renderer, TTF_Font* font);
 
 bool isNearGamblingMachine(Batarong* batarong) {
     int dx = abs((batarong->x + batarong->width/2) - (gamblingMachine.x + GAMBLING_MACHINE_WIDTH/2));
@@ -614,7 +721,7 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
             bKeyPressed = false;  // Reset when key is released
         }
 
-        if (!isGambling) {
+    if (!isGambling) {
             // Check if sprint key was released
             if (!state[SDL_SCANCODE_LSHIFT]) {
                 batarong->sprintKeyReleased = true;
@@ -638,19 +745,22 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
 
             float currentSpeed = BASE_SPEED * (batarong->isSprinting ? SPRINT_SPEED : 1.0);
 
-            if (state[SDL_SCANCODE_UP]) {
-                if (batarong->onGround) {
-                    batarong->velocityY = JUMP_FORCE; // Jump if on the ground
-                    batarong->onGround = false;
+            // Block movement when dialog requests freeze
+            if (!dialogState.active || !dialogState.freeze_movement) {
+                if (state[SDL_SCANCODE_UP]) {
+                    if (batarong->onGround) {
+                        batarong->velocityY = JUMP_FORCE; // Jump if on the ground
+                        batarong->onGround = false;
+                    }
                 }
-            }
-            if (state[SDL_SCANCODE_LEFT]) {
-                batarong->x -= currentSpeed; // Move left
-                batarong->facingLeft = true;  // Update direction
-            }
-            if (state[SDL_SCANCODE_RIGHT]) {
-                batarong->x += currentSpeed; // Move right
-                batarong->facingLeft = false;  // Update direction
+                if (state[SDL_SCANCODE_LEFT]) {
+                    batarong->x -= currentSpeed; // Move left
+                    batarong->facingLeft = true;  // Update direction
+                }
+                if (state[SDL_SCANCODE_RIGHT]) {
+                    batarong->x += currentSpeed; // Move right
+                    batarong->facingLeft = false;  // Update direction
+                }
             }
         }
 
@@ -674,6 +784,7 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
                 }
             }
         }
+
     } else {
         // Update the restart logic in handleInput function
         if (state[SDL_SCANCODE_R]) {
@@ -951,6 +1062,7 @@ int main(void) {
 
     // Create a renderer
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, 0); // Create a renderer
+    (void)renderer;
 
     if (renderer == NULL) {
         printf("Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
@@ -1088,6 +1200,8 @@ int main(void) {
     const int targetFPS = 30;
     const int frameDelay = 1000 / targetFPS; // Delay in milliseconds
 
+    // renderer is available in local scope
+
     while (running) {
         Uint32 frameStart = SDL_GetTicks(); // Get the start time of the frame
 
@@ -1197,6 +1311,9 @@ int main(void) {
 
         // Add bullet rendering here
         renderBullets(renderer);
+
+    // Always render dialog last so overlay appears above HUD
+    dialog_draw(renderer, font);
 
         // Present the back buffer
         SDL_RenderPresent(renderer); 
