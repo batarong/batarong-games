@@ -4,58 +4,122 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
+
+/* Layout and physics constants */
 #define MAX_PLATFORMS 12
 #define PLATFORM_WIDTH 100
 #define PLATFORM_HEIGHT 20
-#define GRAVITY 1 // Gravity constant
-#define JUMP_FORCE -15 // Jump force
+#define GRAVITY 1
+#define JUMP_FORCE -15
 #define WINDOW_HEIGHT 600
 #define MAX_PIWO 10
 #define SPRINT_SPEED 2.0
 #define BASE_SPEED 5
 
+/* Sprint mechanics */
 #define MAX_SPRINT_ENERGY 100.0f
 #define SPRINT_DRAIN_RATE 1.0f
 #define SPRINT_REGEN_RATE 0.2f
 #define SPRINT_BAR_WIDTH 200
 #define SPRINT_BAR_HEIGHT 20
 
+/* UI / object sizes */
 #define GAMBLING_MACHINE_WIDTH 64
 #define GAMBLING_MACHINE_HEIGHT 64
 
-#define SPIN_TIME 2000  // 2 seconds for spinning animation
-#define RESULT_DISPLAY_TIME 2000  // 2 seconds to show result
-#define ERROR_DISPLAY_TIME 2000  // 2 seconds to show error
+/* Timings (milliseconds) */
+#define SPIN_TIME 2000
+#define RESULT_DISPLAY_TIME 2000
+#define ERROR_DISPLAY_TIME 2000
 
-// Add near other #define statements
+
+/* Fonts and NPC/shop constants */
 #define SMALL_FONT_SIZE 18
 #define REGULAR_FONT_SIZE 24
 
-#define MAX_RAY 3  // Maximum number of Ray NPCs
+#define MAX_RAY 3
 #define RAY_WIDTH 64
 #define RAY_HEIGHT 64
 #define SHOP_ITEM_COUNT 3
 #define SHOP_ITEM_NAME_MAX 64
 
-// Add near other #define statements
+/* Bullets */
 #define MAX_BULLETS 10
 #define BULLET_SPEED 10
 #define BULLET_WIDTH 8
 #define BULLET_HEIGHT 4
 
-// shitty markdown stuff
+/* Character config limits */
 #define MAX_CHARACTER_DEF 16
 #define CHARACTER_NAME_MAX 32
 #define CHARACTER_IMAGE_MAX 128
 
 typedef struct {
     char name[CHARACTER_NAME_MAX];
-    char image[CHARACTER_IMAGE_MAX];
-} CharacterDef;
+    char imagePath[CHARACTER_IMAGE_MAX];
+} CharacterDefinition;
 
-static CharacterDef characterDefs[MAX_CHARACTER_DEF];
-static int characterDefCount = 0;
+static CharacterDefinition characterDefinitions[MAX_CHARACTER_DEF];
+static int characterDefinitionCount = 0;
+
+typedef struct {
+    void* data;
+    size_t size;
+} MemoryFile;
+
+static int loadFileToMemory(const char* filePath, MemoryFile* output) {
+    if (!output) return -1;
+    memset(output, 0, sizeof(*output));
+    FILE* file = fopen(filePath, "rb");
+    if (!file) {
+        fprintf(stderr, "Error opening file: %s\n", filePath);
+        return -1;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return -1; }
+    long fileSize = ftell(file);
+    if (fileSize < 0) { fclose(file); return -1; }
+    rewind(file);
+    void* buffer = malloc((size_t)fileSize);
+    if (!buffer) { fclose(file); return -1; }
+    size_t bytesRead = fread(buffer, 1, (size_t)fileSize, file);
+    fclose(file);
+    if (bytesRead != (size_t)fileSize) { free(buffer); return -1; }
+    output->data = buffer;
+    output->size = (size_t)fileSize;
+    return 0;
+}
+
+// Keep font buffer alive for lifetime of program (TTF might stream)
+static MemoryFile mainFontMem = {0};
+
+// Loading screen state
+static void renderLoadingScreen(SDL_Renderer* renderer, TTF_Font* font, const char* status, int step, int total) {
+    SDL_SetRenderDrawColor(renderer, 10, 10, 30, 255);
+    SDL_RenderClear(renderer);
+    int barWidth = (int)((total > 0) ? (float)step / total * 600 : 0);
+    SDL_Rect background = {100, 280, 600, 40};
+    SDL_SetRenderDrawColor(renderer, 60, 60, 90, 255);
+    SDL_RenderFillRect(renderer, &background);
+    SDL_Rect foreground = {100, 280, barWidth, 40};
+    SDL_SetRenderDrawColor(renderer, 120, 180, 255, 255);
+    SDL_RenderFillRect(renderer, &foreground);
+    if (font && status) {
+        SDL_Color white = {255, 255, 255, 255};
+        char line[256];
+        snprintf(line, sizeof(line), "%s (%d/%d)", status, step, total);
+        SDL_Surface* surface = TTF_RenderText_Solid(font, line, white);
+        if (surface) {
+            SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+            SDL_Rect textRect = { (800 - surface->w) / 2, 220, surface->w, surface->h };
+            SDL_RenderCopy(renderer, texture, NULL, &textRect);
+            SDL_DestroyTexture(texture);
+            SDL_FreeSurface(surface);
+        }
+    }
+    SDL_RenderPresent(renderer);
+}
 
 static char* ltrim(char* s) {
     while (*s && (*s==' '||*s=='\t'||*s=='\r' )) s++;
@@ -67,90 +131,63 @@ static void rtrim(char* s) {
     while (len>0 && (s[len-1]=='\n'||s[len-1]=='\r'||s[len-1]==' '||s[len-1]=='\t')) { s[--len]='\0'; }
 }
 
-static void addCharacterDef(const char* name, const char* image) {
-    if (!name || !*name || !image || !*image) return;
-    for (int i=0;i<characterDefCount;i++) {
-        if (strcmp(characterDefs[i].name, name)==0) {
-            size_t ilen = strlen(image);
-            if (ilen >= CHARACTER_IMAGE_MAX) ilen = CHARACTER_IMAGE_MAX-1;
-            memcpy(characterDefs[i].image, image, ilen);
-            characterDefs[i].image[ilen] = '\0';
+static void addCharacterDefinition(const char* name, const char* imagePath) {
+    if (!name || !*name || !imagePath || !*imagePath) return;
+    for (int i = 0; i < characterDefinitionCount; i++) {
+        if (strcmp(characterDefinitions[i].name, name) == 0) {
+            strncpy(characterDefinitions[i].imagePath, imagePath, CHARACTER_IMAGE_MAX - 1);
+            characterDefinitions[i].imagePath[CHARACTER_IMAGE_MAX - 1] = '\0';
             return;
         }
     }
-    if (characterDefCount < MAX_CHARACTER_DEF) {
-        size_t nlen = strlen(name);
-        if (nlen >= CHARACTER_NAME_MAX) nlen = CHARACTER_NAME_MAX-1;
-        memcpy(characterDefs[characterDefCount].name, name, nlen);
-        characterDefs[characterDefCount].name[nlen] = '\0';
-        size_t ilen2 = strlen(image);
-        if (ilen2 >= CHARACTER_IMAGE_MAX) ilen2 = CHARACTER_IMAGE_MAX-1;
-        memcpy(characterDefs[characterDefCount].image, image, ilen2);
-        characterDefs[characterDefCount].image[ilen2] = '\0';
-        characterDefCount++;
+    if (characterDefinitionCount < MAX_CHARACTER_DEF) {
+        strncpy(characterDefinitions[characterDefinitionCount].name, name, CHARACTER_NAME_MAX - 1);
+        characterDefinitions[characterDefinitionCount].name[CHARACTER_NAME_MAX - 1] = '\0';
+        strncpy(characterDefinitions[characterDefinitionCount].imagePath, imagePath, CHARACTER_IMAGE_MAX - 1);
+        characterDefinitions[characterDefinitionCount].imagePath[CHARACTER_IMAGE_MAX - 1] = '\0';
+        characterDefinitionCount++;
     }
 }
 
-static const char* getCharacterImage(const char* name, const char* fallback) {
-    for (int i=0;i<characterDefCount;i++) {
-        if (strcmp(characterDefs[i].name, name)==0) return characterDefs[i].image;
+static const char* getCharacterImagePath(const char* name, const char* fallback) {
+    for (int i = 0; i < characterDefinitionCount; i++) {
+        if (strcmp(characterDefinitions[i].name, name) == 0) return characterDefinitions[i].imagePath;
     }
     return fallback;
 }
 
-static void loadCharacterConfig(const char* path) {
-    FILE* f = fopen(path, "r");
-    if (!f) {
-        fprintf(stderr, "[config] Failed to open %s, using built-in defaults.\n", path);
+static void loadCharacterConfig(const char* filePath) {
+    FILE* file = fopen(filePath, "r");
+    if (!file) {
+        fprintf(stderr, "Error opening config file: %s\n", filePath);
         return;
     }
     char line[256];
     char currentName[CHARACTER_NAME_MAX] = "";
-    char currentCategory[CHARACTER_NAME_MAX] = "";
-    while (fgets(line, sizeof(line), f)) {
-        char* p = ltrim(line);
-        if (!*p) continue;
-        if (p[0]=='#') {
-            int hashes = 0; while (p[hashes]=='#') hashes++;
-            char* after = p + hashes;
-            after = ltrim(after);
-            rtrim(after);
-            char* paren = strchr(after, '(');
-            if (paren) {
-                char* q = paren; while (q>after && (*(q-1)==' '||*(q-1)=='\t')) q--; *q='\0';
-            }
-            if (hashes==1) { // category
-                size_t clen = strlen(after);
-                if (clen >= CHARACTER_NAME_MAX) clen = CHARACTER_NAME_MAX-1;
-                memcpy(currentCategory, after, clen);
-                currentCategory[clen]='\0';
-                currentName[0]='\0';
-            } else if (hashes==2) { // entry
-                size_t elen = strlen(after);
-                if (elen >= CHARACTER_NAME_MAX) elen = CHARACTER_NAME_MAX-1;
-                memcpy(currentName, after, elen);
-                currentName[elen]='\0';
+    while (fgets(line, sizeof(line), file)) {
+        char* trimmedLine = ltrim(line);
+        if (!*trimmedLine) continue;
+        if (trimmedLine[0] == '#') {
+            int hashCount = 0;
+            while (trimmedLine[hashCount] == '#') hashCount++;
+            char* sectionName = ltrim(trimmedLine + hashCount);
+            rtrim(sectionName);
+            if (hashCount == 2) {
+                strncpy(currentName, sectionName, CHARACTER_NAME_MAX - 1);
+                currentName[CHARACTER_NAME_MAX - 1] = '\0';
             }
             continue;
         }
-        // key=value lines inside a section
-        if (*currentName) {
-            if (strncmp(p, "image", 5)==0) {
-                char* eq = strchr(p, '=');
-                if (eq) {
-                    eq++; eq = ltrim(eq);
-                    rtrim(eq);
-                    if (*eq=='"') {
-                        char* endq = strrchr(eq+1, '"');
-                        if (endq) *endq='\0';
-                        eq++;
-                    }
-                    addCharacterDef(currentName, eq);
-                }
+        if (*currentName && strncmp(trimmedLine, "image", 5) == 0) {
+            char* equalsSign = strchr(trimmedLine, '=');
+            if (equalsSign) {
+                char* imagePath = ltrim(equalsSign + 1);
+                rtrim(imagePath);
+                addCharacterDefinition(currentName, imagePath);
             }
         }
     }
-    fclose(f);
+    fclose(file);
 }
 
 // Global camera offset
@@ -253,34 +290,34 @@ ShopItem shopItems[SHOP_ITEM_COUNT] = {
 };
 
 Platform platforms[MAX_PLATFORMS] = {
-    {100, 500, {100, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 1
-    {300, 400, {300, 400, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 2
-    {500, 300, {500, 300, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 3
-    {200, 200, {200, 200, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 4
-    {300, 500, {300, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 5
-    {400, 500, {400, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 6
-    {500, 500, {500, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 7
-    {500, 600, {500, 600, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 8
-    {500, 700, {500, 700, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 9
-    {600, 500, {600, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 10
-    {700, 500, {700, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, // Platform 11
-    {400, 100, {400, 100, PLATFORM_WIDTH, PLATFORM_HEIGHT}}  // Platform 12
+    {100, 500, {100, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {300, 400, {300, 400, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {500, 300, {500, 300, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {200, 200, {200, 200, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {300, 500, {300, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {400, 500, {400, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {500, 500, {500, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {500, 600, {500, 600, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {500, 700, {500, 700, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {600, 500, {600, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {700, 500, {700, 500, PLATFORM_WIDTH, PLATFORM_HEIGHT}}, 
+    {400, 100, {400, 100, PLATFORM_WIDTH, PLATFORM_HEIGHT}}  
 };
 
 int platformCount = MAX_PLATFORMS;
 
 // Piwo collectibles
 Piwo piwoList[MAX_PIWO] = {
-    {150, 450, NULL, false}, // Piwo 1
-    {350, 350, NULL, false}, // Piwo 2
-    {550, 250, NULL, false}, // Piwo 3
-    {250, 150, NULL, false}, // Piwo 4
-    {450, 50, NULL, false},  // Piwo 5
-    {450, 51, NULL, false},  // Piwo 6
-    {450, 52, NULL, false},  // Piwo 7
-    {450, 53, NULL, false},  // Piwo 8
-    {450, 54, NULL, false},  // Piwo 9
-    {450, 55, NULL, false}   // Piwo 10
+    {150, 450, NULL, false}, 
+    {350, 350, NULL, false}, 
+    {550, 250, NULL, false}, 
+    {250, 150, NULL, false}, 
+    {450, 50, NULL, false},  
+    {450, 51, NULL, false},  
+    {450, 52, NULL, false},  
+    {450, 53, NULL, false},  
+    {450, 54, NULL, false},  
+    {450, 55, NULL, false}   
 };
 
 int piwoCount = 0; // Counter for collected piwo
@@ -293,6 +330,9 @@ bool hasGun = false;
 Bullet bullets[MAX_BULLETS] = {0};
 Uint32 lastShotTime = 0;
 const int SHOOT_COOLDOWN = 250;  // 250ms cooldown between shots
+// Maintain a compact list of active bullet indices to avoid scanning all slots
+static int activeBulletIndices[MAX_BULLETS];
+static int activeBulletCount = 0;
 
 // Function prototypes
 void handleInput(bool* running, Batarong* batarong, bool* gameOver);
@@ -498,6 +538,7 @@ void startGambling() {
     }
 }
 
+// Only call SDL_GetKeyboardState once per frame
 void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -508,8 +549,7 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
             handleTextInput(&event);
         }
     }
-
-    // Get the current state of the keyboard
+    // Get the current state of the keyboard (single fetch)
     const Uint8* state = SDL_GetKeyboardState(NULL);
 
     // Handle keyboard input for movement
@@ -658,9 +698,8 @@ void handleInput(bool* running, Batarong* batarong, bool* gameOver) {
         }
     }
 
-    // Add shooting control before the gameOver check
+    // Shooting control (reuses fetched state)
     if (!*gameOver && !isGambling && !isShoppingOpen && !isPaused) {
-        const Uint8* state = SDL_GetKeyboardState(NULL);
         if (state[SDL_SCANCODE_SPACE] && hasGun) {
             shootBullet(batarong);
         }
@@ -677,22 +716,17 @@ void applyGravity(Batarong* batarong) {
 bool checkCollision(Batarong* batarong, bool* gameOver) {
     // Reset onGround status
     batarong->onGround = false;
-
-    // Remove gambling machine collision check and keep only platform collisions
+    // Precompute predicted next Y once per frame (saves repeated arithmetic inside loop)
+    int nextYPred = batarong->y + batarong->velocityY + GRAVITY;
     for (int i = 0; i < platformCount; i++) {
-        // Calculate the next position of the batarong
-        int nextY = batarong->y + batarong->velocityY + GRAVITY;
-
-        // Check if the player is falling onto the platform
         if (batarong->x < platforms[i].x + PLATFORM_WIDTH &&
             batarong->x + batarong->width > platforms[i].x &&
-            nextY + batarong->height >= platforms[i].y &&
-            nextY <= platforms[i].y + PLATFORM_HEIGHT) {
-            // Collision detected
-            batarong->y = platforms[i].y - batarong->height; // Place player on top of the platform
-            batarong->onGround = true; // Player is on the ground
-            batarong->velocityY = 0; // Reset vertical velocity
-            break;
+            nextYPred + batarong->height >= platforms[i].y &&
+            nextYPred <= platforms[i].y + PLATFORM_HEIGHT) {
+            batarong->y = platforms[i].y - batarong->height;
+            batarong->onGround = true;
+            batarong->velocityY = 0;
+            break; // Early out after landing
         }
     }
 
@@ -820,22 +854,31 @@ void shootBullet(Batarong* batarong) {
             bullets[i].x = batarong->x + (batarong->facingLeft ? 0 : batarong->width);
             bullets[i].y = batarong->y + (batarong->height / 2);
             lastShotTime = currentTime;
+            // Register in active list
+            if (activeBulletCount < MAX_BULLETS) {
+                activeBulletIndices[activeBulletCount++] = i;
+            }
             break;
         }
     }
 }
 
 void updateBullets(void) {
-    for (int i = 0; i < MAX_BULLETS; i++) {
-        if (bullets[i].active) {
-            // Move bullet
-            bullets[i].x += bullets[i].direction ? -BULLET_SPEED : BULLET_SPEED;
-            
-            // Deactivate if off screen
-            if (bullets[i].x < cameraX - 100 || bullets[i].x > cameraX + 900) {
-                bullets[i].active = false;
-            }
+    for (int i = 0; i < activeBulletCount; ) {
+        int idx = activeBulletIndices[i];
+        Bullet* b = &bullets[idx];
+        if (!b->active) {
+            // Remove stale entry (should rarely happen)
+            activeBulletIndices[i] = activeBulletIndices[--activeBulletCount];
+            continue;
         }
+        b->x += b->direction ? -BULLET_SPEED : BULLET_SPEED;
+        if (b->x < cameraX - 100 || b->x > cameraX + 900) {
+            b->active = false;
+            activeBulletIndices[i] = activeBulletIndices[--activeBulletCount];
+            continue; // Don't increment i; swapped element needs processing
+        }
+        i++; // Only advance if bullet remains active
     }
 }
 
@@ -871,24 +914,26 @@ int main(void) {
         return 1;
     }
 
-    // Load a font
-    TTF_Font* font = TTF_OpenFont("COMIC.TTF", 24); // Replace with your font path
-    if (font == NULL) {
-        printf("Failed to load font! TTF_Error: %s\n", TTF_GetError());
+    // Load font file fully into memory then use RWops
+    if (readFileToMemory("COMIC.TTF", &mainFontMem) != 0) {
+        printf("Failed to read font file into memory.\n");
         TTF_Quit();
         SDL_Quit();
         return 1;
     }
-
-    // Update main function where font is loaded, add a second font
-    // After the first font loading
-    TTF_Font* smallFont = TTF_OpenFont("COMIC.TTF", SMALL_FONT_SIZE);
-    if (smallFont == NULL) {
-        printf("Failed to load small font! TTF_Error: %s\n", TTF_GetError());
+    SDL_RWops* fontRW = SDL_RWFromConstMem(mainFontMem.data, (int)mainFontMem.size);
+    SDL_RWops* smallFontRW = SDL_RWFromConstMem(mainFontMem.data, (int)mainFontMem.size); // reuse buffer
+    TTF_Font* font = TTF_OpenFontRW(fontRW, 1, REGULAR_FONT_SIZE);
+    if (!font) {
+        printf("Failed to open main font from memory: %s\n", TTF_GetError());
+        SDL_RWclose(fontRW);
+        TTF_Quit(); SDL_Quit(); return 1;
+    }
+    TTF_Font* smallFont = TTF_OpenFontRW(smallFontRW, 1, SMALL_FONT_SIZE);
+    if (!smallFont) {
+        printf("Failed to open small font from memory: %s\n", TTF_GetError());
         TTF_CloseFont(font);
-        TTF_Quit();
-        SDL_Quit();
-        return 1;
+        TTF_Quit(); SDL_Quit(); return 1;
     }
 
     // Create a window and check for errors
@@ -916,11 +961,17 @@ int main(void) {
         return 1;
     }
 
-    // Load the background image (category backgrounds -> entry 'default')
-    SDL_Surface* bgSurface = SDL_LoadBMP(getCharacterImage("default", "images/bliss.bmp"));
-    // Create a texture from the background surface
-    SDL_Texture* bgTexture = SDL_CreateTextureFromSurface(renderer, bgSurface);
-    SDL_FreeSurface(bgSurface); // Free the temporary surface
+    // Total steps for loading screen (adjust if adding more assets)
+    const int totalSteps = 7;
+    int step = 0;
+    renderLoadingScreen(renderer, font, "Loading background", ++step, totalSteps);
+    // Load background into memory first
+    MemoryFile bgMem = {0};
+    readFileToMemory(getCharacterImage("default", "images/bliss.bmp"), &bgMem);
+    SDL_RWops* bgRW = SDL_RWFromConstMem(bgMem.data, (int)bgMem.size);
+    SDL_Surface* bgSurface = bgRW ? SDL_LoadBMP_RW(bgRW, 1) : NULL;
+    SDL_Texture* bgTexture = bgSurface ? SDL_CreateTextureFromSurface(renderer, bgSurface) : NULL;
+    if (bgSurface) SDL_FreeSurface(bgSurface);
 
     if (bgTexture == NULL) {
         printf("Unable to create background texture! SDL Error: %s\n", SDL_GetError());
@@ -932,8 +983,11 @@ int main(void) {
         return 1;
     }
 
-    // Load the player image
-    SDL_Surface* tempSurface = SDL_LoadBMP(getCharacterImage("player", "images/batarong.bmp"));
+    renderLoadingScreen(renderer, font, "Loading player", ++step, totalSteps);
+    MemoryFile playerMem = {0};
+    readFileToMemory(getCharacterImage("player", "images/batarong.bmp"), &playerMem);
+    SDL_RWops* playerRW = SDL_RWFromConstMem(playerMem.data, (int)playerMem.size);
+    SDL_Surface* tempSurface = playerRW ? SDL_LoadBMP_RW(playerRW, 1) : NULL;
     if (tempSurface == NULL) {
         printf("Unable to load image! SDL Error: %s\n", SDL_GetError());
         SDL_DestroyTexture(bgTexture);
@@ -962,8 +1016,11 @@ int main(void) {
         return 1;
     }
 
-    // Load the piwo image
-    SDL_Surface* piwoSurface = SDL_LoadBMP(getCharacterImage("piwo", "images/piwo.bmp")); // From config
+    renderLoadingScreen(renderer, font, "Loading piwo", ++step, totalSteps);
+    MemoryFile piwoMem = {0};
+    readFileToMemory(getCharacterImage("piwo", "images/piwo.bmp"), &piwoMem);
+    SDL_RWops* piwoRW = SDL_RWFromConstMem(piwoMem.data, (int)piwoMem.size);
+    SDL_Surface* piwoSurface = piwoRW ? SDL_LoadBMP_RW(piwoRW, 1) : NULL; // From config
     if (piwoSurface == NULL) {
         printf("Unable to load piwo image! SDL Error: %s\n", SDL_GetError());
         SDL_DestroyTexture(batarong.texture);
@@ -982,8 +1039,11 @@ int main(void) {
     }
     SDL_FreeSurface(piwoSurface); // Free the temporary surface
 
-    // Load gambling machine texture
-    SDL_Surface* gamblingMachineSurface = SDL_LoadBMP(getCharacterImage("gambling_machine", "images/gambling.bmp"));
+    renderLoadingScreen(renderer, font, "Loading gambling machine", ++step, totalSteps);
+    MemoryFile gamblingMem = {0};
+    readFileToMemory(getCharacterImage("gambling_machine", "images/gambling.bmp"), &gamblingMem);
+    SDL_RWops* gamblingRW = SDL_RWFromConstMem(gamblingMem.data, (int)gamblingMem.size);
+    SDL_Surface* gamblingMachineSurface = gamblingRW ? SDL_LoadBMP_RW(gamblingRW, 1) : NULL;
     if (gamblingMachineSurface == NULL) {
         printf("Unable to load gambling machine image! SDL Error: %s\n", SDL_GetError());
         // ... handle error ...
@@ -991,8 +1051,11 @@ int main(void) {
     gamblingMachine.texture = SDL_CreateTextureFromSurface(renderer, gamblingMachineSurface);
     SDL_FreeSurface(gamblingMachineSurface);
 
-    // Load Ray texture
-    SDL_Surface* raySurface = SDL_LoadBMP(getCharacterImage("ray", "images/ray.bmp"));
+    renderLoadingScreen(renderer, font, "Loading ray", ++step, totalSteps);
+    MemoryFile rayMem = {0};
+    readFileToMemory(getCharacterImage("ray", "images/ray.bmp"), &rayMem);
+    SDL_RWops* rayRW = SDL_RWFromConstMem(rayMem.data, (int)rayMem.size);
+    SDL_Surface* raySurface = rayRW ? SDL_LoadBMP_RW(rayRW, 1) : NULL;
     if (raySurface == NULL) {
         printf("Unable to load Ray image! SDL Error: %s\n", SDL_GetError());
         // ... handle error ...
@@ -1004,8 +1067,11 @@ int main(void) {
     }
     SDL_FreeSurface(raySurface);
 
-    // Load gun texture
-    SDL_Surface* gunSurface = SDL_LoadBMP(getCharacterImage("gun", "images/gun.bmp"));
+    renderLoadingScreen(renderer, font, "Loading gun", ++step, totalSteps);
+    MemoryFile gunMem = {0};
+    readFileToMemory(getCharacterImage("gun", "images/gun.bmp"), &gunMem);
+    SDL_RWops* gunRW = SDL_RWFromConstMem(gunMem.data, (int)gunMem.size);
+    SDL_Surface* gunSurface = gunRW ? SDL_LoadBMP_RW(gunRW, 1) : NULL;
     if (gunSurface == NULL) {
         printf("Unable to load gun image! SDL Error: %s\n", SDL_GetError());
     } else {
@@ -1013,6 +1079,7 @@ int main(void) {
         SDL_FreeSurface(gunSurface);
     }
 
+    renderLoadingScreen(renderer, font, "Finishing", ++step, totalSteps);
     // Game loop
     bool running = true;
     bool gameOver = false; // Game over state
